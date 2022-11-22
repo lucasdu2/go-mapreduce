@@ -5,6 +5,7 @@ operation and should also offer an interface for the user to execute an
 arbitrary MapReduce application. Specifically, it should handle the following
 inputs:
 - Input file
+- `.so` file containing all application-defined plugin functions
 - Number of workers available
 - Number of Map tasks (M)
 - Number of Reduce tasks (R)
@@ -15,6 +16,17 @@ plugin package (which looks for files ending in `.so`).
 
 The calling code should also be able to take the R output files (from the
 Reduce tasks) and produce a single, combined output file. 
+
+### Additional Details
+**[10-31-22]**
+The application will need to define 4 plugin functions. It must define a Map and 
+Reduce function that will be called for Map and Reduce tasks, respectively. It 
+must also define an InputSplitter function (to specify how the application wants 
+to split the single input file into M splits for the Map stage), and a Partitioner
+function to define how intermediate keys are partitioned into R groups for the
+Reduce stage. These functions will be loaded at run-time using a plugin. Note:
+InputSplitter must split up the input file into files of name pg-{index}.txt,
+where {index} is in [0, M). The coordinator code will expect this format. 
 
 ## Coordinator
 The coordinator should be implemented as an RPC server--the workers and the 
@@ -29,6 +41,9 @@ responsibilities, which are listed below:
 Note that our coordinator implementation will not deal with its own failure. 
 As described in the original MapReduce paper, if the coordinator fails during a
 MapReduce operation, the operation will simply terminate. 
+
+### Additional Details
+XXX 
 
 ## Worker
 A worker will communicate with the coordinator using RPCs. In general, a worker

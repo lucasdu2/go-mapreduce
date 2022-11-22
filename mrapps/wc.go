@@ -2,10 +2,11 @@ package main
 
 import (
 	"os"
+	"strconv"
 	"strings"
 )
 
-// Map takes in the contents of the document as a string. It also takes in a
+// Map takes in the contents of a document as a string. It also takes in a
 // pointer to a dictionary where it will store the intermediate key, value pairs
 // (word, count pairs in our case). These intermediate key, value pairs will
 // eventually be written from memory to files for use in Reduce.
@@ -27,11 +28,15 @@ func Map(data string, storedict *map[string]string) error {
 	// counts of repeated words directly in the Map task, instead of waiting for
 	// the Reduce task to do all the "reducing" (which is summing in this case).
 	for _, w := range words {
-		if val, ok := *storedict[w]; ok {
-			*storedict[w] = string(int(val) + 1)
+		if val, ok := (*storedict)[w]; ok {
+			valInt, err := strconv.Atoi(val)
+			if err != nil {
+				return err
+			}
+			(*storedict)[w] = string(valInt + 1)
 
 		} else {
-			*storedict[w] = "1"
+			(*storedict)[w] = "1"
 		}
 	}
 	return nil
@@ -44,10 +49,14 @@ func Map(data string, storedict *map[string]string) error {
 func Reduce(key string, values []string, fp *os.File) error {
 	sum := 0
 	for _, v := range values {
-		sum += int(v)
+		vInt, err := strconv.Atoi(v)
+		if err != nil {
+			return err
+		}
+		sum += vInt
 	}
 	// Write output to output file
-	kvOutput := strings.Join([]string{key, sum}, " ")
+	kvOutput := strings.Join([]string{key, string(sum)}, " ")
 	_, err := fp.WriteString(kvOutput + "\n")
 	if err != nil {
 		return err
@@ -58,27 +67,28 @@ func Reduce(key string, values []string, fp *os.File) error {
 
 // Helper function for InputSplitter that writes a split into pg-index.txt.
 func writeSplit(split string, index int) error {
-	f, err := os.Create("pg-" + string(index) + ".txt")
+	f, err := os.Create("pg-" + strconv.Itoa(index) + ".txt")
 	defer f.Close()
 	if err != nil {
 		return err
 	}
-	_, err := f.WriteString(split)
+	_, err = f.WriteString(split)
 	if err != nil {
 		return err
 	}
+	return nil
 }
 
 // InputSplitter takes in a file and splits it into M separate files (one for
 // each Map task). Each split file will be named pg-index, where index is some
 // integer from 0 to M-1.
 func InputSplitter(filename string, m int) error {
-	data, err := os.ReadFile(string)
+	data, err := os.ReadFile(filename)
 	if err != nil {
 		return err
 	}
-	data = string(data)
-	words := strings.Fields(data)
+	dataString := string(data)
+	words := strings.Fields(dataString)
 
 	// Split input file into M separate files
 	var start, index, totalWords int = 0, 0, len(words)
@@ -86,14 +96,16 @@ func InputSplitter(filename string, m int) error {
 		end := start + totalWords/m
 		var split string
 		if end < totalWords {
-			split := strings.Join(data[start:end], " ")
+			split = strings.Join(words[start:end], " ")
 		} else {
-			split := strings.Join(data[start:], " ")
+			split = strings.Join(words[start:], " ")
 		}
 		err := writeSplit(split, index)
 		if err != nil {
 			return err
 		}
+		start = end
+		index++
 	}
 	return nil
 }
@@ -106,7 +118,7 @@ func Partitioner(key string, r int) (int, error) {
 	hash := func(in string) (out int) {
 		out = 0
 		for _, c := range in {
-			out += c
+			out += int(c)
 		}
 		return
 	}
