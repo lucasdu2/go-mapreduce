@@ -22,7 +22,7 @@ type TaskInfo struct {
 // Implement concurrent stack type to manage task assignments
 type taskStack struct {
 	mu    sync.Mutex
-	stack []TaskInfo
+	stack []*TaskInfo
 }
 
 func newTaskStack(taskFiles []string, stage string) *taskStack {
@@ -40,13 +40,13 @@ func newTaskStack(taskFiles []string, stage string) *taskStack {
 	return ts
 }
 
-func (s *taskStack) push(t TaskInfo) {
+func (s *taskStack) push(t *TaskInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	append(s.stack, t)
 }
 
-func (s *taskStack) pop() (TaskInfo, error) {
+func (s *taskStack) pop() (*TaskInfo, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	l := len(s.stack)
@@ -111,6 +111,7 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 
 	// Initialize fields for atomic task counter
 	coordinator.cond = sync.NewCond(sync.Mutex{})
+	// Initialize total for map stage
 	coordinator.total = m
 	coordinator.count = 0
 	coordinator.done = false
@@ -118,25 +119,41 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 }
 
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
+	// Handle logic when a worker has completed a task
 	if args.prevTaskCompleted {
 		// Check if task has already been completed
-		// TODO
-		// Increment completed tasks counter
-		if c.numTasksCompleted.inc() {
-			// If the last task is now completed, handle end of stage logic
+		if !c.taskCompletion[args.prevTaskIndex] {
+			// TODO: add to intermediate files
+			// Increment completed tasks counter
+			c.countInc()
 		}
 	}
+	// Assign new task to worker, if possible
 	var err error
 	reply, err = c.taskAssigner.pop()
-	// If taskAssigner stack is empty, wait until all other tasks in stage are
-	// done before continuing
+	// pop() will only return an non-nil error is there are no more tasks to
+	// assing. If this is the case, wait until all other tasks in stage are done
+	// before continuing.
 	if err != nil {
 		// NOTE: For why we should wrap the Wait() in a for loop spinning on
 		// done, see here: https://stackoverflow.com/questions/33841585
 		for !c.done {
 			c.cond.Wait()
 		}
+		// If the next stage is Reduce, the task stack will have been refilled
+		// at this point and we will be able to pop from it. If the stack is
+		// still empty, the Reduce stage is complete, theMapReduce operation is
+		// over, and we should return.
+		reply, err = c.taskAssigner.pop()
+		if err != nil {
+			// MapReduce operation is over
+			// TODO: Should probably send a message in reply to tell worker to
+			// shut down
+			// TODO: SHould also clean up all intermediate files that we used
+			return nil
+		}
 	}
+	return nil
 }
 
 func (c *Coordinator) CheckWorker() {
@@ -145,7 +162,7 @@ func (c *Coordinator) CheckWorker() {
 
 // countInc implements an atomic increment for the coordinator's completed
 // tasks counter
-func (c *Coordinator) countInc() bool {
+func (c *Coordinator) countInc() {
 	c.cond.L.Lock()
 	defer c.cond.L.Unlock()
 	c.count++
@@ -155,10 +172,6 @@ func (c *Coordinator) countInc() bool {
 		if c.stage == "map" {
 			c.stage = "reduce"
 			c.setupReduce()
-		} else if c.stage == "reduce" {
-			// TODO: Handle end of MapReduce operation
-		} else {
-			// TODO: Return error here (although you should never reach this code)
 		}
 		// Set done to true
 		c.done = true
@@ -169,7 +182,27 @@ func (c *Coordinator) countInc() bool {
 
 // Set up Coordinator for Reduce stage
 func (c *Coordinator) setupReduce() {
+	// Construct taskCompletion map (initialize for Reduce stage)
+	taskCompletion := make(map[int]bool)
+	for i := 0; i < c.R; i++ {
+		taskCompletion[i] = false
+	}
 
+	// Construct taskAssigner taskStack (initialize for Map stage)
+	taskFiles := make([]string, c.R)
+	for i := 0; i < c.R; i++ {
+		// NOTE: The coordinator code here expects Map task files to be of the
+		// form pg-{index}.txt. The application-defined InputSplitter must
+		// conform to this convention.
+		// TODO: Below is NOT correct, need to fix
+		append(taskFiles, c.intermediateFiles[i])
+	}
+	coordinator.taskAssigner = newTaskStack(taskFiles, "reduce")
+
+	c.stage = "reduce"
+	c.total = c.R
+	c.count = 0
+	c.done = false
 }
 
 // Run Coordinator execution flow
