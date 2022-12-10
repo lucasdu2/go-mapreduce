@@ -1,4 +1,4 @@
-package mapreduce
+package main
 
 import (
 	"flag"
@@ -17,8 +17,8 @@ func main() {
 	var err error
 
 	// Parse command line arguments
-	inputFile := flag.String("input", "apps/wc-in-A.txt", "input filename")
-	appFunctions := flag.String("functions", "apps/wc.so",
+	inputFile := flag.String("input", "mrapps/wc-in-A.txt", "input filename")
+	appFunctions := flag.String("functions", "mrapps/wc.so",
 		"plugin filename containing all application-specific functions: "+
 			"Map, Reduce, InputSplitter, Partitioner")
 	numWorkers := flag.Int("workers", 4, "number of workers to spawn")
@@ -30,7 +30,7 @@ func main() {
 	// to aid in debugging.
 
 	// Load application-specific functions at runtime
-	p, err := plugin.Open(appFunctions)
+	p, err := plugin.Open(*appFunctions)
 	errCheck(err)
 	mapFunc, err := p.Lookup("Map")
 	errCheck(err)
@@ -42,7 +42,7 @@ func main() {
 	errCheck(err)
 
 	// Split input using application-specified InputSplitter function
-	err = splitter.(func())(inputFile, m)
+	err = splitter.(func(string, int) error)(*inputFile, *m)
 	errCheck(err)
 
 	// Spawn coordinator and worker programs

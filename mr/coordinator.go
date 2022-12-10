@@ -60,23 +60,26 @@ func (s *taskStack) pop() (TaskInfo, error) {
 
 // Implement atomic counter to track number of completed tasks
 type taskCounter struct {
-	mu    sync.Mutex
+	cond  sync.Cond
 	total int
 	count int
+	done  bool // Indicates when stage is over
 }
 
 func newTaskCounter(totalTasks int) *taskCounter {
-	tc := &taskCounter{sync.Mutex{}, totalTasks, 0}
+	tc := &taskCounter{sync.NewCond(sync.Mutex{}), totalTasks, 0, false}
 	return tc
 }
 
-func (c *taskCounter) inc() {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.count++
-	if c.count == c.totalTasks {
-		// TODO: Do something here to indicate that all expected tasks have
-		// completed and the stage is over
+func (tc *taskCounter) inc() bool {
+	tc.cond.L.Lock()
+	defer tc.cond.L.Unlock()
+	tc.count++
+	if tc.count == tc.totalTasks {
+		// Once we finish all tasks in a stage, broadcast to all waiting RPC
+		// handlers that stage is over
+		tc.done = true
+		tc.cond.Broadcast()
 	}
 }
 
@@ -88,7 +91,7 @@ type Coordinator struct {
 	R                 int              // Number of Reduce tasks
 	workers           []workerInfo     // Tracks worker health, assigned task
 	taskCompletion    map[int]bool     // Tracks task status (completed or not)
-	numTasksCompleted *taskCounter     // Counter of total completed tasks
+	taskCounter       *taskCounter     // Counter of total completed tasks
 	taskAssigner      *taskStack       // Tracks idle tasks (to be assigned)
 	intermediateFiles map[int][]string // Locations of intermediate files
 }
@@ -122,39 +125,29 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	}
 	coordinator.taskAssigner = newTaskStack(taskFiles, "map")
 	// Initialize numTasksCompleted taskCounter
-	coordinator.numTasksCompleted = newTaskCounter()
+	coordinator.taskCounter = newTaskCounter()
 	// Initialize intermediateFiles map
 	coordinator.intermediateFiles = make(map[int][]string)
 }
 
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	if args.prevTaskCompleted {
-		c.numTasksCompleted.inc()
+		// Check if task has already been completed
+		// TODO
+		// Increment completed tasks counter
+		if c.numTasksCompleted.inc() {
+			// If the last task is now completed, handle end of stage logic
+		}
 	}
 	var err error
 	reply, err = c.taskAssigner.pop()
-	// TODO: Handle error case
-
-	// NOTES: Task assignment, stage completion logic:
-	// - If no tasks waiting to be assigned, implement Backup Tasks (as
-	//	 described in the MapReduce paper). Look for in-progress tasks (need
-	//	 efficient way to do this) and assign to the idle worker.
-	// - Once all tasks are done, need way to signal to all workers to stop work,
-	//	 need way to signal end of the stage
-	//		- Can probably just do this by having another RPC handler that the
-	//		  workers will call in a loop (with some time between each call),
-	//		  that will check to see if the all tasks are done/the stage is
-	//		  complete. Maybe this can piggyback off of the heartbeat RPC to
-	//		  make it more network efficient. Additionally, to save time,
-	//		  idle workers (workers that have finished all assigned tasks and
-	//		  are not working on a Backup Task) can immediately request a task
-	//		  from the new stage, minimizing the latency that can be caused by
-	//		  time-interval based RPC checks from the worker. For this case,
-	//		  we can employ sync.Cond Wait (see below) for immediate notification
-	//		  upon full task completion.
-	// - ASIDE: If we don't implement Backup Tasks, we can simply have a sync.Cond
-	//	 Wait in this RPC handler that waits for the number of completed tasks
-	//	 to reach the expected total.
+	if err != nil {
+		for !c.taskCounter.done {
+			c.taskCounter.cond.Wait()
+		}
+	}
+	// TODO: If no more items to assign, wait until all tasks in the stage are
+	// completed then return
 }
 
 func (c *Coordinator) CheckWorker() {

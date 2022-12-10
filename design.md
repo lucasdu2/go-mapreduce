@@ -43,7 +43,7 @@ As described in the original MapReduce paper, if the coordinator fails during a
 MapReduce operation, the operation will simply terminate. 
 
 ### Additional Details
-XXX 
+See the specific coordinator design document [here](coordinator-design.md).
 
 ## Worker
 A worker will communicate with the coordinator using RPCs. In general, a worker
