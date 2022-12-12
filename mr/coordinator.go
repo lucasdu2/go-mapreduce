@@ -3,29 +3,52 @@ package mapreduce
 import (
 	"errors"
 	"strconv"
+	"strings"
 	"sync"
 )
 
 // Set up supporting structs for coordinator
 // =============================================================================
+// workerInfo tracks the health of a worker and what task, if any, it is
+// currently expected to be working on
 type workerInfo struct {
 	up        bool
 	taskIndex int
 }
 
+// TaskInfo defines a struct to pass information about a Map or Reduce task to
+// a worker. We define filesLocation as a slice of string slices in order to
+// handle both a single input file (Map task) and a list of input files (Reduce
+// task).
 type TaskInfo struct {
-	taskIndex    int
-	fileLocation string
-	stage        string
+	taskIndex     int
+	filesLocation [][]string
+	stage         string
 }
 
-// Implement concurrent stack type to manage task assignments
+// taskStack implements a concurrent stack type to manage task assignments
 type taskStack struct {
 	mu    sync.Mutex
 	stack []*TaskInfo
 }
 
-func newTaskStack(taskFiles []string, stage string) *taskStack {
+// newMapTaskStack constructs a
+func newMapTaskStack(taskFiles []string) *taskStack {
+	// Create taskStack struct and populate
+	ts := &taskStack{sync.Mutex{}, make([]TaskInfo, 0)}
+	for i, fname := range taskFiles {
+		// Create TaskInfo struct for each task file
+		ti := &TaskInfo{
+			taskIndex:     i,
+			filesLocation: []string{fname},
+			stage:         "map",
+		}
+		append(ts.stack, ti)
+	}
+	return ts
+}
+
+func newReduceTaskStack(taskFiles [][]string) *taskStack {
 	// Create taskStack struct and populate
 	ts := &taskStack{sync.Mutex{}, make([]TaskInfo, 0)}
 	for i, fname := range taskFiles {
@@ -33,7 +56,7 @@ func newTaskStack(taskFiles []string, stage string) *taskStack {
 		ti := &TaskInfo{
 			taskIndex:    i,
 			fileLocation: fname,
-			stage:        stage,
+			stage:        "reduce",
 		}
 		append(ts.stack, ti)
 	}
@@ -62,13 +85,17 @@ func (s *taskStack) pop() (*TaskInfo, error) {
 // =============================================================================
 // Define core Coordinator struct
 type Coordinator struct {
-	M                 int              // Number of Map tasks
-	R                 int              // Number of Reduce tasks
-	workers           []workerInfo     // Tracks worker health, assigned task
-	taskCompletion    map[int]bool     // Tracks task status (completed or not)
-	taskAssigner      *taskStack       // Tracks idle tasks (to be assigned)
-	intermediateFiles map[int][]string // Locations of intermediate files
-	stage             string           // Declare current stage (Map or Reduce)
+	// TODO: Both workers and intermediateFiles slices can be concurrently
+	// accessed (need to see if this really matters for workers, since it is
+	// possible that each index is only modified sequentially), probably need
+	// to protect them with some kind of lock
+	M                 int          // Number of Map tasks
+	R                 int          // Number of Reduce tasks
+	workers           []workerInfo // Tracks worker health, assigned task
+	taskCompletion    map[int]bool // Tracks task status (completed or not)
+	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
+	intermediateFiles [][]string   // Locations of intermediate files
+	stage             string       // Declare current stage (Map or Reduce)
 
 	// Fields for atomic task counter
 	cond  sync.Cond // Used to synchronize stage completion
@@ -104,9 +131,12 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 		// conform to this convention.
 		append(taskFiles, "pg-"+strconv.Itoa(i)+".txt")
 	}
-	coordinator.taskAssigner = newTaskStack(taskFiles, "map")
-	// Initialize intermediateFiles map
-	coordinator.intermediateFiles = make(map[int][]string)
+	coordinator.taskAssigner = newMapTaskStack(taskFiles)
+	// Initialize intermediateFiles
+	// NOTE: We initialize an r-size array on string slices. This gives one
+	// index for every Reduce task, which allows us to easily sort intermediate
+	// files by Reduce task and construct a taskStack for the Reduce stage.
+	coordinator.intermediateFiles = [r][]string{}
 	coordinator.stage = "map"
 
 	// Initialize fields for atomic task counter
@@ -118,12 +148,31 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 
 }
 
+func (c *Coordinator) addToIntermediateFiles(mapTaskIndex int) {
+	// NOTE: All intermediate files will be of the form mr-X-Y, where X is the
+	// index of the Map task and Y is the index of the Reduce task. This will
+	// be the format that the workers must adhere to when creating intermediate
+	// files and is the format assumed here.
+	var sb strings.Builder
+	for i := 0; i < c.R; i++ {
+		sb.Reset()
+		sb.WriteString("mr-")
+		sb.WriteString(strconv.Itoa(mapTaskIndex))
+		sb.WriteString(strconv.Itoa(i))
+		filename := sb.String()
+		append(c.intermediateFiles[i], filename)
+	}
+}
+
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// Handle logic when a worker has completed a task
 	if args.prevTaskCompleted {
-		// Check if task has already been completed
+		// Only add to intermediate files (for Map tasks) and increment
+		// completed task counter if task has not already been completed
 		if !c.taskCompletion[args.prevTaskIndex] {
-			// TODO: add to intermediate files
+			if c.stage == "map" {
+				addToIntermediateFiles(args.prevTaskIndex)
+			}
 			// Increment completed tasks counter
 			c.countInc()
 		}
@@ -135,6 +184,13 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// assing. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
 	if err != nil {
+		// Update worker in workers (workerInfo slice) with a "no task" indicator
+		// TODO: Is it possible for a task to be completed but still in the
+		// taskAssigner stack? For example, if we have 2 workers working on the
+		// same task, but one fails while the other succeeds. We need to work
+		// something into worker failed logic (in CheckWorker) that prevents
+		// an already completed task from being requeued.
+		c.workers[args.workerIndex].taskIndex = -1
 		// NOTE: For why we should wrap the Wait() in a for loop spinning on
 		// done, see here: https://stackoverflow.com/questions/33841585
 		for !c.done {
@@ -149,10 +205,12 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			// MapReduce operation is over
 			// TODO: Should probably send a message in reply to tell worker to
 			// shut down
-			// TODO: SHould also clean up all intermediate files that we used
+			// TODO: Should also clean up all intermediate files that we used
 			return nil
 		}
 	}
+	// Update workers (workerInfo slice) with newly assigned task
+	c.workers[args.workerIndex].taskIndex = reply.taskIndex
 	return nil
 }
 
@@ -187,18 +245,8 @@ func (c *Coordinator) setupReduce() {
 	for i := 0; i < c.R; i++ {
 		taskCompletion[i] = false
 	}
-
 	// Construct taskAssigner taskStack (initialize for Map stage)
-	taskFiles := make([]string, c.R)
-	for i := 0; i < c.R; i++ {
-		// NOTE: The coordinator code here expects Map task files to be of the
-		// form pg-{index}.txt. The application-defined InputSplitter must
-		// conform to this convention.
-		// TODO: Below is NOT correct, need to fix
-		append(taskFiles, c.intermediateFiles[i])
-	}
-	coordinator.taskAssigner = newTaskStack(taskFiles, "reduce")
-
+	coordinator.taskAssigner = newReduceTaskStack(c.intermediateFiles)
 	c.stage = "reduce"
 	c.total = c.R
 	c.count = 0

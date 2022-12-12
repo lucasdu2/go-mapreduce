@@ -74,6 +74,9 @@ corresponding set of intermediate values to the Reduce function. The result of
 the Reduce function will be appended to the final output file for this specific
 Reduce task. 
 
+### Additional Details
+See the specific coordinator design document [here](worker-design.md).
+
 # Testing Plan
 You will need to write your own testing framework for this project, since the 
 course's testing framework is not provided. The framework should consist of a

@@ -41,3 +41,11 @@ MapReduce operation. In contrast, the 1st option requires the workers to submit
 an RPC to the coordinator to find out that the stage is over. Depending on the
 particular timings of the system, there may be some latency after the coordinator
 knows the stage is over before the workers are able to proceed.
+
+### Coordinating Access to Intermediate Files
+Each Map task will write to a set of intermediate files of format mr-X-Y, where
+X is the index of the Map task and Y is the index of a Reduce task. Upon the 
+completion of a Map task, the coordinator will append the new file for each
+Reduce task to the intermediateFiles slice in the Coordinator struct. This will
+automatically collect the set of files for each Reduce task in discrete slices,
+which makes the process of assigning them easier.
