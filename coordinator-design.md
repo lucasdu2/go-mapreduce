@@ -43,9 +43,29 @@ particular timings of the system, there may be some latency after the coordinato
 knows the stage is over before the workers are able to proceed.
 
 ### Coordinating Access to Intermediate Files
+TODO: See worker-design.md, we should NOT name the intermediate files mr-X-Y.
+
 Each Map task will write to a set of intermediate files of format mr-X-Y, where
 X is the index of the Map task and Y is the index of a Reduce task. Upon the 
 completion of a Map task, the coordinator will append the new file for each
 Reduce task to the intermediateFiles slice in the Coordinator struct. This will
 automatically collect the set of files for each Reduce task in discrete slices,
 which makes the process of assigning them easier.
+
+We need to protect the intermediateFiles slice with a lock because multiple
+different workers can concurrently update it, and specifically, can update the
+same indices within it. This means that multiple threads can be writing to the
+same data, which will lead to correctness issues without a lock to enforce
+sequential execution of some kind. 
+
+On a related note, the workers slice (see Coordinator struct) can also be 
+updated concurrently by multiple workers. Specifically, multiple workers can
+concurrently be assigned a task by calling AssignTask, which will also 
+concurrently update the workers slice. However, each index of workers will only
+ever be updated by a single worker. And due to the nature of MapReduce, where 
+there is no recourse in the case of coordinator failure, the worker will never 
+have reason to issue overlapping calls to AssignTask. So a worker will only 
+call AssignTask, and thus update its workers index, sequentially. Thus, there is
+actually no correctness problem due to concurrency in workers, since each thread 
+will only update its own piece of data in sequential order.
+

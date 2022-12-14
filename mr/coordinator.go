@@ -85,15 +85,20 @@ func (s *taskStack) pop() (*TaskInfo, error) {
 // =============================================================================
 // Define core Coordinator struct
 type Coordinator struct {
-	// TODO: Both workers and intermediateFiles slices can be concurrently
-	// accessed (need to see if this really matters for workers, since it is
-	// possible that each index is only modified sequentially), probably need
-	// to protect them with some kind of lock
+	// NOTE: Both workers and intermediateFiles slices can be concurrently
+	// accessed. Multiple threads can access the same index in intermediateFiles,
+	// so we must protect it with a lock. For workers, it is only modified in
+	// AssignTask, and each index will only be modified by one worker. Due to
+	// the fact that if the coordinator is down, the MapReduce operation is
+	// considered terminated, a worker should never submit overlapping requests
+	// for a new task. So each index in workers will be modified sequentially,
+	// thus precluding the need for a lock.
 	M                 int          // Number of Map tasks
 	R                 int          // Number of Reduce tasks
 	workers           []workerInfo // Tracks worker health, assigned task
 	taskCompletion    map[int]bool // Tracks task status (completed or not)
 	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
+	intFilesLock      sync.Mutex   // Lock to protect intermediateFiles
 	intermediateFiles [][]string   // Locations of intermediate files
 	stage             string       // Declare current stage (Map or Reduce)
 
@@ -149,6 +154,10 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 }
 
 func (c *Coordinator) addToIntermediateFiles(mapTaskIndex int) {
+	// Acquire lock before updating intermediateFiles slice
+	// See NOTE in Coordinator struct for reasoning
+	c.intFilesLock.Lock()
+	defer c.intFilesLock.Unlock()
 	// NOTE: All intermediate files will be of the form mr-X-Y, where X is the
 	// index of the Map task and Y is the index of the Reduce task. This will
 	// be the format that the workers must adhere to when creating intermediate
@@ -181,15 +190,10 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	var err error
 	reply, err = c.taskAssigner.pop()
 	// pop() will only return an non-nil error is there are no more tasks to
-	// assing. If this is the case, wait until all other tasks in stage are done
+	// assign. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
 	if err != nil {
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
-		// TODO: Is it possible for a task to be completed but still in the
-		// taskAssigner stack? For example, if we have 2 workers working on the
-		// same task, but one fails while the other succeeds. We need to work
-		// something into worker failed logic (in CheckWorker) that prevents
-		// an already completed task from being requeued.
 		c.workers[args.workerIndex].taskIndex = -1
 		// NOTE: For why we should wrap the Wait() in a for loop spinning on
 		// done, see here: https://stackoverflow.com/questions/33841585
@@ -209,13 +213,17 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			return nil
 		}
 	}
-	// Update workers (workerInfo slice) with newly assigned task
+	// Update worker status (in workers []workerInfo) with newly assigned task
 	c.workers[args.workerIndex].taskIndex = reply.taskIndex
 	return nil
 }
 
 func (c *Coordinator) CheckWorker() {
-
+	// TODO: Is it possible for a task to be completed but still in the
+	// taskAssigner stack? For example, if we have 2 workers working on the
+	// same task, but one fails while the other succeeds. We need to work
+	// something into worker failed logic (in CheckWorker) that prevents
+	// an already completed task from being requeued.
 }
 
 // countInc implements an atomic increment for the coordinator's completed
