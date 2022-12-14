@@ -45,12 +45,15 @@ knows the stage is over before the workers are able to proceed.
 ### Coordinating Access to Intermediate Files
 TODO: See worker-design.md, we should NOT name the intermediate files mr-X-Y.
 
-Each Map task will write to a set of intermediate files of format mr-X-Y, where
-X is the index of the Map task and Y is the index of a Reduce task. Upon the 
-completion of a Map task, the coordinator will append the new file for each
-Reduce task to the intermediateFiles slice in the Coordinator struct. This will
-automatically collect the set of files for each Reduce task in discrete slices,
-which makes the process of assigning them easier.
+Each Map task will write to a set of intermediate files of format workerN-X-Y, 
+where X is the index of the Map task, Y is the index of a Reduce task, and N is
+the index of the worker that completed the task. 
+
+Upon the completion of a Map task, the coordinator will append the new file for 
+each Reduce task to the slice at the appropriate index in intermediateFiles (see
+Coordinator struct for intermediateFiles definition). This will automatically 
+collect the set of files for each Reduce task in discrete slices, which makes 
+the process of assigning them easier.
 
 We need to protect the intermediateFiles slice with a lock because multiple
 different workers can concurrently update it, and specifically, can update the

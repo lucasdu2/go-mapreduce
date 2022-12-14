@@ -12,7 +12,6 @@ paper says we can buffer these pairs in memory and periodically write to disk
 (see point #4 in 3.1), but this seems to allow for the undesired case summarized
 previously.
 
-NOTE: Not sure where to put the stuff below, putting here for now.
 Multiple workers could be working on the same Map task, which means we need some
 way of keeping their intermediate files separate. If we don't do this, we could
 have multiple workers writing to the same set of intermediate files, which will
@@ -24,13 +23,22 @@ how the authors intended this to be implemented, but we can simply add a unique
 file prefix per Map worker. For example, instead of the naive mr-X-Y (where X
 is the Map task index and Y a Reduce task index), we could name the intermediate
 files for worker N workerN-X-Y. This will keep intermediate files for multiple
-workers working on the same Map task distinct. We then need to pass the 
-completed set of files to the coordinator, which will save them in its 
-intermediateFiles slice. Any worker in the future that completes the same Map
-task will simply be ignored.
+workers working on the same Map task distinct. Additionally, since this format
+is deterministic, we do not need to pass the names to the coordinator in an 
+RPC. Instead, the coordinator can simply assume the format and construct the 
+file names itself.
 
-We should also put these files into a temp directory with Go's ioutil.TempFile
-and ensure that we clean them up when MapReduce completes. This will also help
-with debugging the program.
+We should also put all these intermediate files into a single separate directory.
+This will make cleanup of these files easier upon MapReduce completion and will 
+also help with debugging the program.
 
 ## Reduce Execution Component
+Multiple workers can be working on the same Reduce task. This results in the 
+same concurrency problem as above, where multiple workers can be writing to the
+same output file if we do not specify a way to distinguish them.
+
+We follow the advice of the MapReduce paper by creating a unique temporary output
+file for each worker. When a worker finishes a Reduce task, it will attempt to
+atomically rename the its temporary output file to the final output file name.
+We rely on this atomic rename to guarantee that only a single, consistent output
+file will be produced for each Reduce task.

@@ -51,11 +51,11 @@ func newMapTaskStack(taskFiles []string) *taskStack {
 func newReduceTaskStack(taskFiles [][]string) *taskStack {
 	// Create taskStack struct and populate
 	ts := &taskStack{sync.Mutex{}, make([]TaskInfo, 0)}
-	for i, fname := range taskFiles {
+	for i, fnames := range taskFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
 			taskIndex:    i,
-			fileLocation: fname,
+			fileLocation: fnames,
 			stage:        "reduce",
 		}
 		append(ts.stack, ti)
@@ -96,6 +96,7 @@ type Coordinator struct {
 	M                 int          // Number of Map tasks
 	R                 int          // Number of Reduce tasks
 	workers           []workerInfo // Tracks worker health, assigned task
+	taskCompLock      sync.Mutex   // Lock to protect access to taskCompletion
 	taskCompletion    map[int]bool // Tracks task status (completed or not)
 	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
 	intFilesLock      sync.Mutex   // Lock to protect intermediateFiles
@@ -153,24 +154,49 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 
 }
 
-func (c *Coordinator) addToIntermediateFiles(mapTaskIndex int) {
+func (c *Coordinator) addToIntermediateFiles(workerIndex, mapTaskIndex int) {
 	// Acquire lock before updating intermediateFiles slice
 	// See NOTE in Coordinator struct for reasoning
 	c.intFilesLock.Lock()
 	defer c.intFilesLock.Unlock()
-	// NOTE: All intermediate files will be of the form mr-X-Y, where X is the
-	// index of the Map task and Y is the index of the Reduce task. This will
-	// be the format that the workers must adhere to when creating intermediate
-	// files and is the format assumed here.
+
+	// NOTE: All intermediate files will be of the form workerN-X-Y, where X is
+	// the index of the Map task, Y is the index of the Reduce task, and N is the
+	// index of the worker that produced the file. Additionally, we expect all
+	// intermediate files to be placed within a directory called workbench.
+
+	// This will be the format that the workers must adhere to when creating
+	// intermediate files and is the format assumed here.
+
 	var sb strings.Builder
 	for i := 0; i < c.R; i++ {
 		sb.Reset()
-		sb.WriteString("mr-")
+		sb.WriteString("workbench/")
+		sb.WriteString("worker")
+		sb.WriteString(strconv.Itoa(workerIndex))
+		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(mapTaskIndex))
+		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(i))
 		filename := sb.String()
 		append(c.intermediateFiles[i], filename)
 	}
+}
+
+func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
+	c.taskCompLock.Lock()
+	defer c.taskCompLock.Unlock()
+
+	if !c.taskCompletion[args.prevTaskIndex] {
+		if c.stage == "map" {
+			addToIntermediateFiles(args.workerIndex, args.prevTaskIndex)
+		}
+		// Set task status to completed
+		c.taskCompletion[args.prevTaskIndex] = true
+		// Increment completed tasks counter
+		c.countInc()
+	}
+
 }
 
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
@@ -178,13 +204,19 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	if args.prevTaskCompleted {
 		// Only add to intermediate files (for Map tasks) and increment
 		// completed task counter if task has not already been completed
-		if !c.taskCompletion[args.prevTaskIndex] {
-			if c.stage == "map" {
-				addToIntermediateFiles(args.prevTaskIndex)
-			}
-			// Increment completed tasks counter
-			c.countInc()
-		}
+		// NOTE: Multiple workers can concurrently report that they have
+		// completed the same task, so there can be concurrent executions of
+		// this section of code. In particular, there can be concurrent access
+		// to taskCompletion, where multiple workers may see that the task has
+		// not yet been completed and enter the if statement.
+		// Within the if statement, addToIntermediateFiles already synchronizes
+		// writes to intermediateFiles, and setting task status to completed
+		// is an idempotent action. However, we run the risk of incrementing the
+		// completed tasks counter multiple times if multiple workers complete
+		// the same task and enter this section concurrently. This behavior is
+		// incorrect and so we must still synchronize this entire section of
+		// code with a lock.
+		handleTaskCompletion(args)
 	}
 	// Assign new task to worker, if possible
 	var err error

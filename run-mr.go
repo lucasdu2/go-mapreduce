@@ -26,9 +26,6 @@ func main() {
 	r := flag.Int("r", 8, "number of Reduce tasks to create")
 	flag.Parse()
 
-	// TODO: Consider saving all intermediate outputs to a temporary directory
-	// to aid in debugging.
-
 	// Load application-specific functions at runtime
 	p, err := plugin.Open(*appFunctions)
 	errCheck(err)
