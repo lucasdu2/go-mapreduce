@@ -22,7 +22,7 @@ type workerInfo struct {
 // task).
 type TaskInfo struct {
 	taskIndex     int
-	filesLocation [][]string
+	filesLocation []string
 	stage         string
 }
 
@@ -35,7 +35,7 @@ type taskStack struct {
 // newMapTaskStack constructs a
 func newMapTaskStack(taskFiles []string) *taskStack {
 	// Create taskStack struct and populate
-	ts := &taskStack{sync.Mutex{}, make([]TaskInfo, 0)}
+	ts := &taskStack{sync.Mutex{}, make([]*TaskInfo, 0)}
 	for i, fname := range taskFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
@@ -43,22 +43,23 @@ func newMapTaskStack(taskFiles []string) *taskStack {
 			filesLocation: []string{fname},
 			stage:         "map",
 		}
-		append(ts.stack, ti)
+
+		ts.stack = append(ts.stack, ti)
 	}
 	return ts
 }
 
 func newReduceTaskStack(taskFiles [][]string) *taskStack {
 	// Create taskStack struct and populate
-	ts := &taskStack{sync.Mutex{}, make([]TaskInfo, 0)}
+	ts := &taskStack{sync.Mutex{}, make([]*TaskInfo, 0)}
 	for i, fnames := range taskFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
-			taskIndex:    i,
-			fileLocation: fnames,
-			stage:        "reduce",
+			taskIndex:     i,
+			filesLocation: fnames,
+			stage:         "reduce",
 		}
-		append(ts.stack, ti)
+		ts.stack = append(ts.stack, ti)
 	}
 	return ts
 }
@@ -66,7 +67,7 @@ func newReduceTaskStack(taskFiles [][]string) *taskStack {
 func (s *taskStack) push(t *TaskInfo) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	append(s.stack, t)
+	s.stack = append(s.stack, t)
 }
 
 func (s *taskStack) pop() (*TaskInfo, error) {
@@ -96,18 +97,18 @@ type Coordinator struct {
 	M                 int          // Number of Map tasks
 	R                 int          // Number of Reduce tasks
 	workers           []workerInfo // Tracks worker health, assigned task
-	taskCompLock      sync.Mutex   // Lock to protect access to taskCompletion
+	taskCompLock      *sync.Mutex  // Lock to protect access to taskCompletion
 	taskCompletion    map[int]bool // Tracks task status (completed or not)
 	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
-	intFilesLock      sync.Mutex   // Lock to protect intermediateFiles
+	intFilesLock      *sync.Mutex  // Lock to protect intermediateFiles
 	intermediateFiles [][]string   // Locations of intermediate files
 	stage             string       // Declare current stage (Map or Reduce)
 
 	// Fields for atomic task counter
-	cond  sync.Cond // Used to synchronize stage completion
-	total int       // Total tasks in a stage
-	count int       // Counter of completed tasks
-	done  bool      // Indicates when stage is over
+	cond  *sync.Cond // Used to synchronize stage completion
+	total int        // Total tasks in a stage
+	count int        // Counter of completed tasks
+	done  bool       // Indicates when stage is over
 }
 
 // Create a new Coordinator
@@ -119,8 +120,8 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	// Construct workers slice
 	workers := make([]workerInfo, numWorkers)
 	for i := 0; i < numWorkers; i++ {
-		newWorker := &workerInfo{true, i}
-		append(workers, newWorker)
+		newWorker := workerInfo{true, i}
+		workers = append(workers, newWorker)
 	}
 	coordinator.workers = workers
 	// Construct taskCompletion map (initialize for Map stage)
@@ -135,23 +136,28 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 		// NOTE: The coordinator code here expects Map task files to be of the
 		// form pg-{index}.txt. The application-defined InputSplitter must
 		// conform to this convention.
-		append(taskFiles, "pg-"+strconv.Itoa(i)+".txt")
+		taskFiles = append(taskFiles, "pg-"+strconv.Itoa(i)+".txt")
 	}
 	coordinator.taskAssigner = newMapTaskStack(taskFiles)
-	// Initialize intermediateFiles
-	// NOTE: We initialize an r-size array on string slices. This gives one
-	// index for every Reduce task, which allows us to easily sort intermediate
-	// files by Reduce task and construct a taskStack for the Reduce stage.
-	coordinator.intermediateFiles = [r][]string{}
+	// NOTE: For intermediateFiles, we pre-allocate an r x m array. This allows
+	// one index for every Reduce task, where each index stores the m Map outputs
+	// corresponding to that Reduce task. This automatically sorts intermediate
+	// files by Reduce task and makes it easier to construct a taskStack for
+	// the Reduce stage.
+	coordinator.intermediateFiles = make([][]string, r)
+	for i := 0; i < r; i++ {
+		coordinator.intermediateFiles[i] = make([]string, m)
+	}
+
 	coordinator.stage = "map"
 
 	// Initialize fields for atomic task counter
-	coordinator.cond = sync.NewCond(sync.Mutex{})
+	coordinator.cond = sync.NewCond(&sync.Mutex{})
 	// Initialize total for map stage
 	coordinator.total = m
 	coordinator.count = 0
 	coordinator.done = false
-
+	return coordinator, nil
 }
 
 func (c *Coordinator) addToIntermediateFiles(workerIndex, mapTaskIndex int) {
@@ -179,7 +185,7 @@ func (c *Coordinator) addToIntermediateFiles(workerIndex, mapTaskIndex int) {
 		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(i))
 		filename := sb.String()
-		append(c.intermediateFiles[i], filename)
+		c.intermediateFiles[i] = append(c.intermediateFiles[i], filename)
 	}
 }
 
@@ -189,7 +195,7 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 
 	if !c.taskCompletion[args.prevTaskIndex] {
 		if c.stage == "map" {
-			addToIntermediateFiles(args.workerIndex, args.prevTaskIndex)
+			c.addToIntermediateFiles(args.workerIndex, args.prevTaskIndex)
 		}
 		// Set task status to completed
 		c.taskCompletion[args.prevTaskIndex] = true
@@ -216,7 +222,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		// the same task and enter this section concurrently. This behavior is
 		// incorrect and so we must still synchronize this entire section of
 		// code with a lock.
-		handleTaskCompletion(args)
+		c.handleTaskCompletion(args)
 	}
 	// Assign new task to worker, if possible
 	var err error
@@ -265,7 +271,7 @@ func (c *Coordinator) countInc() {
 	defer c.cond.L.Unlock()
 	c.count++
 	// Handle logic when all tasks in stage are completed
-	if c.count == c.totalTasks {
+	if c.count == c.total {
 		// Set up for Reduce stage or end MapReduce operation
 		if c.stage == "map" {
 			c.stage = "reduce"
@@ -285,8 +291,9 @@ func (c *Coordinator) setupReduce() {
 	for i := 0; i < c.R; i++ {
 		taskCompletion[i] = false
 	}
+	c.taskCompletion = taskCompletion
 	// Construct taskAssigner taskStack (initialize for Map stage)
-	coordinator.taskAssigner = newReduceTaskStack(c.intermediateFiles)
+	c.taskAssigner = newReduceTaskStack(c.intermediateFiles)
 	c.stage = "reduce"
 	c.total = c.R
 	c.count = 0
@@ -295,5 +302,5 @@ func (c *Coordinator) setupReduce() {
 
 // Run Coordinator execution flow
 func (c *Coordinator) Run() {
-
+	return
 }

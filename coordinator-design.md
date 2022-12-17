@@ -43,8 +43,6 @@ particular timings of the system, there may be some latency after the coordinato
 knows the stage is over before the workers are able to proceed.
 
 ### Coordinating Access to Intermediate Files
-TODO: See worker-design.md, we should NOT name the intermediate files mr-X-Y.
-
 Each Map task will write to a set of intermediate files of format workerN-X-Y, 
 where X is the index of the Map task, Y is the index of a Reduce task, and N is
 the index of the worker that completed the task. 
