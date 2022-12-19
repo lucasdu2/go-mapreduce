@@ -114,7 +114,7 @@ func InputSplitter(filename string, m int) error {
 // output files desired. It will then assign that key to a specific reduce task
 // using some partitioning function. An int representing the reduce task number
 // is returned.
-func Partitioner(key string, r int) (int, error) {
+func Partitioner(key string, r int) int {
 	hash := func(in string) (out int) {
 		out = 0
 		for _, c := range in {
@@ -122,5 +122,5 @@ func Partitioner(key string, r int) (int, error) {
 		}
 		return
 	}
-	return (hash(key) % r), nil
+	return (hash(key) % r)
 }

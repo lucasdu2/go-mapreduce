@@ -3,7 +3,6 @@ package mapreduce
 import (
 	"errors"
 	"strconv"
-	"strings"
 	"sync"
 )
 
@@ -160,32 +159,25 @@ func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	return coordinator, nil
 }
 
-func (c *Coordinator) addToIntermediateFiles(workerIndex, mapTaskIndex int) {
+func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 	// Acquire lock before updating intermediateFiles slice
 	// See NOTE in Coordinator struct for reasoning
 	c.intFilesLock.Lock()
 	defer c.intFilesLock.Unlock()
 
 	// NOTE: All intermediate files will be of the form workerN-X-Y, where X is
-	// the index of the Map task, Y is the index of the Reduce task, and N is the
+	// the index of the Map task, Y is the index of a Reduce task, and N is the
 	// index of the worker that produced the file. Additionally, we expect all
 	// intermediate files to be placed within a directory called workbench.
 
 	// This will be the format that the workers must adhere to when creating
 	// intermediate files and is the format assumed here.
 
-	var sb strings.Builder
-	for i := 0; i < c.R; i++ {
-		sb.Reset()
-		sb.WriteString("workbench/")
-		sb.WriteString("worker")
-		sb.WriteString(strconv.Itoa(workerIndex))
-		sb.WriteString("-")
-		sb.WriteString(strconv.Itoa(mapTaskIndex))
-		sb.WriteString("-")
-		sb.WriteString(strconv.Itoa(i))
-		filename := sb.String()
-		c.intermediateFiles[i] = append(c.intermediateFiles[i], filename)
+	for _, filename := range outputFiles {
+		// Get Reduce partition index fron file name, given the name format
+		// noted above
+		index := strconv.Atoi(filename[len(filename)-1:])
+		c.intermediateFiles[index] = append(c.intermediateFiles[index], filename)
 	}
 }
 
@@ -193,9 +185,10 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	c.taskCompLock.Lock()
 	defer c.taskCompLock.Unlock()
 
+	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.prevTaskIndex] {
 		if c.stage == "map" {
-			c.addToIntermediateFiles(args.workerIndex, args.prevTaskIndex)
+			c.addToIntermediateFiles(args.outputFiles)
 		}
 		// Set task status to completed
 		c.taskCompletion[args.prevTaskIndex] = true
