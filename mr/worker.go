@@ -1,6 +1,7 @@
 package mapreduce
 
 import (
+	"bufio"
 	"os"
 	"strconv"
 	"strings"
@@ -28,7 +29,6 @@ type Worker struct {
 // files.
 func (w *Worker) writeIntermediateFiles(taskIndex int,
 	partitionToKVs map[int][]string) ([]string, error) {
-
 	var outFiles []string
 	for partitionIndex, kvs := range partitionToKVs {
 		// Specify proper filename
@@ -98,7 +98,7 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	// partitionToKVs maps a partition index to all the key, value pairs that
 	// are partitioned to it. key, value pairs will be converted to strings of
 	// form: "key,value"
-	var partitionToKVs map[int][]string
+	partitionToKVs := make(map[int][]string)
 	var sb strings.Builder
 	for key, value := range storedict {
 		p := w.partFunc(key, w.R)
@@ -117,9 +117,48 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	return outFiles, nil
 }
 
-func (w *Worker) runReduce() error {
-	// Read data from each file
-	// Sort by intermediate keys
+func (w *Worker) addFileValuesToMap(fname string,
+	collectedKVs map[string][]string) error {
+	fp, err := os.Open(fname)
+	if err != nil {
+		return err
+	}
+	fileScanner := bufio.NewScanner(fp)
+	fileScanner.Split(bufio.ScanLines)
+	for fileScanner.Scan() {
+		// Handle any errors during scan
+		if err := fileScanner.Err(); err != nil {
+			return err
+		}
+		kv := fileScanner.Text()
+		// kv should be a string of the form "key,value"; this is the form
+		// specified when we write to intermediate files in runMap()
+		kvSplit = strings.Split(kv, ",")
+		key := kvSplit[0]
+		values := kvSplit[1]
+		if _, ok := collectedKVs[key]; ok {
+			// TODO: Figure out how to format these values...
+			// Are the values from Map always going to be single values or is it
+			// possible to have a list? We need to formalize this to minimize
+			// surprises.
+			collectedKVs[key] = collected // TODO
+		} else {
+
+		}
+
+	}
+
+}
+
+func (w *Worker) runReduce(fnames []string, taskIndex int) error {
+	// Read data from each file and sort by intermediate keys
+	// Create map from each key to collected set of values across all input files
+	collectedKVs := make(map[string][]string)
+	for _, fname := range fnames {
+		// Read each key from file and add its set of values to the map
+
+	}
+
 	// Run Reduce on each key
 	// Write output to temporary file
 	// Attempt atomic rename to final output file name
