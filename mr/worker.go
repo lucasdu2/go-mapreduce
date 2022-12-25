@@ -149,18 +149,8 @@ func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 		// specified when we write to intermediate files in runMap()
 		kvSplit = strings.Split(kv, ",")
 		key := kvSplit[0]
-		values := kvSplit[1]
-		if _, ok := sorted[key]; ok {
-			// TODO: Figure out how to format these values...
-			// Are the values from Map always going to be single values or is it
-			// possible to have a list? We need to formalize this to minimize
-			// surprises. There will need to be changes in our application-defined
-			// functions as well as in our runMap() code.
-			sorted[key] = collected // TODO
-		} else {
-
-		}
-
+		value := kvSplit[1]
+		sorted[key] = append(sorted[key], value)
 	}
 
 }
@@ -171,11 +161,22 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	collectedKVs := make(map[string][]string)
 	for _, fname := range fnames {
 		// Read each key from file and add its set of values to the map
-
+		err := w.sortByKey(fname, collectedKVs)
+		if err != nil {
+			return err
+		}
 	}
-
-	// Run Reduce on each key
-	// Write output to temporary file
+	// Run Reduce on list of values associated with each key and write output
+	// to temporary file
+	// TODO: Need to figure out how to write to file. Do we want to open a file
+	// and repeatedly append to it (which is the pattern necessitated right now
+	// by the way we have structured the Reduce function interface)? Or do we
+	// want to write all the output at once? The latter would require an
+	// adjustment to the Reduce function interface and the addition of some
+	// intermediate data structure to store output data before write.
+	for key, values := range collectedKVs {
+		w.redFunc(key, values)
+	}
 	// Attempt atomic rename to final output file name
 	return
 }
