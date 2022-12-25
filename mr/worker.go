@@ -111,10 +111,6 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	// previous note).
 	for key, values := range storedict {
 		p := w.partFunc(key, w.R)
-		// If partition hash does not yet exist, initialize it
-		if _, ok := partitionToKVs[p]; !ok {
-			partitionToKVs[p] = []string{}
-		}
 		sb.Reset()
 		sb.WriteString(key)
 		sb.WriteString(",")
