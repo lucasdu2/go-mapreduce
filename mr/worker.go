@@ -87,27 +87,46 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	// Convert byte array to string
 	data = string(data)
 	// Run Map function on data
-	// Create dict to store intermediate key, value pairs
-	storedict := make(map[string]string)
-	err = w.mapFunc(data, &storedict)
+	// Create dict to map intermediate keys to list of associated values
+	storedict := make(map[string][]string)
+	err = w.mapFunc(data, storedict)
 	if err != nil {
 		return nil, err
 	}
 
-	// Sort keys into R partitions using partitioning function
+	// Sort keys into R partitions using supplied partitioning function
 	// partitionToKVs maps a partition index to all the key, value pairs that
 	// are partitioned to it. key, value pairs will be converted to strings of
-	// form: "key,value"
+	// form "key,value" and will be written in this form to intermediate files.
+	// NOTE: Each "key,value" line in an intermediate file will only map one key
+	// to one value. A key could be mapped to multiple values; they will just be
+	// on separate lines.
 	partitionToKVs := make(map[int][]string)
 	var sb strings.Builder
-	for key, value := range storedict {
+	// NOTE: "values" is a slice of strings that could contain multiple values
+	// corresponding to a key. We need to split these up into individual key,
+	// value pairs to match the expected format within intermediate files.
+	// Intermediate files should always contain one key, value pair on each line;
+	// if a key maps to multiple values, they will be on separate lines (see
+	// previous note).
+	for key, values := range storedict {
 		p := w.partFunc(key, w.R)
+		// If partition hash does not yet exist, initialize it
+		if _, ok := partitionToKVs[p]; !ok {
+			partitionToKVs[p] = []string{}
+		}
 		sb.Reset()
 		sb.WriteString(key)
 		sb.WriteString(",")
-		sb.WriteString(value)
-		kvString := sb.String()
-		partitionToKVs[p] = append(partitionToKVs[p], kvString)
+		prefix := sb.String()
+		for _, value := range values {
+			sb.Reset()
+			sb.WriteString(prefix)
+			sb.WriteString(value)
+			// Append each individual "key,value" pair (one key to one value) to
+			// the string slice associated with the appropriate partition.
+			partitionToKVs[p] = append(partitionToKVs[p], sb.String())
+		}
 	}
 	// Write resulting data to intermediate files
 	outFiles, err := w.writeIntermediateFiles(taskIndex, partitionToKVs)
@@ -117,8 +136,7 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	return outFiles, nil
 }
 
-func (w *Worker) addFileValuesToMap(fname string,
-	collectedKVs map[string][]string) error {
+func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 	fp, err := os.Open(fname)
 	if err != nil {
 		return err
@@ -136,12 +154,13 @@ func (w *Worker) addFileValuesToMap(fname string,
 		kvSplit = strings.Split(kv, ",")
 		key := kvSplit[0]
 		values := kvSplit[1]
-		if _, ok := collectedKVs[key]; ok {
+		if _, ok := sorted[key]; ok {
 			// TODO: Figure out how to format these values...
 			// Are the values from Map always going to be single values or is it
 			// possible to have a list? We need to formalize this to minimize
-			// surprises.
-			collectedKVs[key] = collected // TODO
+			// surprises. There will need to be changes in our application-defined
+			// functions as well as in our runMap() code.
+			sorted[key] = collected // TODO
 		} else {
 
 		}

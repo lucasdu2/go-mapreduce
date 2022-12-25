@@ -7,10 +7,11 @@ import (
 )
 
 // Map takes in the contents of a document as a string. It also takes in a
-// pointer to a dictionary where it will store the intermediate key, value pairs
-// (word, count pairs in our case). These intermediate key, value pairs will
-// eventually be written from memory to files for use in Reduce.
-func Map(data string, storedict *map[string]string) error {
+// pointer to a dictionary which maps intermediate keys to a list of values
+// associated with it (a word to word count map, in our case). All these key,
+// value pairs will eventually be written to intermediate files (writing to
+// files is handled by the general Map code in our worker program).
+func Map(data string, storedict map[string][]string) error {
 	// Remove all punctuation from data and split by whitespace
 	removePunctuation := func(r rune) rune {
 		if strings.ContainsRune(".,:;", r) {
@@ -26,17 +27,21 @@ func Map(data string, storedict *map[string]string) error {
 	// Store word, count pairs in dictionary
 	// NOTE: We perform a small optimization here by immediately summing the
 	// counts of repeated words directly in the Map task, instead of waiting for
-	// the Reduce task to do all the "reducing" (which is summing in this case).
+	// the Reduce task to do all the reducing (which is summing in this case).
 	for _, w := range words {
-		if val, ok := (*storedict)[w]; ok {
+		if val, ok := storedict[w]; ok {
+			// If we already have values for a key, append to existing slice
+			// NOTE: We are pre-emptively doing some reducing (see note above),
+			// so instead of appending to the slice as we normally would, we
+			// simply increment the existing counter.
 			valInt, err := strconv.Atoi(val)
 			if err != nil {
 				return err
 			}
-			(*storedict)[w] = string(valInt + 1)
-
+			storedict[w][0] = string(valInt + 1)
 		} else {
-			(*storedict)[w] = "1"
+			// If no values yet for a key, initialize a string slice for it
+			(*storedict)[w] = []string{"1"}
 		}
 	}
 	return nil
