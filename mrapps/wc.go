@@ -51,6 +51,9 @@ func Map(data string, storedict map[string][]string) error {
 // key. It also takes in a file pointer that points to the output file for this
 // specific Reduce worker; Reduce will directly append its output to this output
 // file.
+// NOTE: Reduce expects the file pointer fp to refer to a file opened in append
+// mode. If the file is not opened in append mode, Reduce will not correctly
+// write data to file.
 func Reduce(key string, values []string, fp *os.File) error {
 	sum := 0
 	for _, v := range values {

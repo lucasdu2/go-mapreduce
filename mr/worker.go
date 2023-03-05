@@ -31,6 +31,7 @@ type Worker struct {
 func (w *Worker) writeIntermediateFiles(taskIndex int,
 	partitionToKVs map[int][]string) ([]string, error) {
 	var outFiles []string
+	var sb strings.Builder
 	for partitionIndex, kvs := range partitionToKVs {
 		// Specify proper filename
 		// NOTE: All intermediate files will be of the form workerN-X-Y, where X
@@ -45,10 +46,10 @@ func (w *Worker) writeIntermediateFiles(taskIndex int,
 		sb.WriteString(strconv.Itoa(taskIndex))
 		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(partitionIndex))
-		filename := sb.String()
+		filenamePrefix := sb.String()
 		// Add all key, value pairs to appropriate intermediate file
 		// NOTE: We will call the temp file directory "workbench"
-		fp, err := os.CreateTemp("workbench", filename)
+		fp, err := os.CreateTemp("workbench", filenamePrefix)
 		if err != nil {
 			return nil, err
 		}
@@ -177,16 +178,41 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	sort.Strings(sortedKeys)
 	// Run Reduce on list of values associated with each key and write output
 	// to temporary file
-	// TODO: Need to figure out how to write to file. Do we want to open a file
-	// and repeatedly append to it (which is the pattern necessitated right now
-	// by the way we have structured the Reduce function interface)? Or do we
-	// want to write all the output at once? The latter would require an
-	// adjustment to the Reduce function interface and the addition of some
-	// intermediate data structure to store output data before write.
+	var sb strings.Builder
+	sb.Reset()
+	sb.WriteString("out-")
+	sb.WriteString(strconv.Itoa(taskIndex))
+	sb.Writestring("-worker")
+	sb.WriteString(strconv.Itoa(w.workerIndex))
+	filenamePrefix := sb.String()
+	// Create temp file in workbench for output file
+	tempf, err := os.CreateTemp("workbench", filenamePrefix)
+	if err != nil {
+		return err
+	}
+	// Get exact name of temp file
+	tf := tempf.Name()
+	// Ensure the temp file pointer gets closed
+	defer tempf.Close()
+	// Re-open output file in append mode
+	fp, err := os.OpenFile(tf, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	if err != nil {
+		return err
+	}
+	defer fp.Close()
 	for _, k := range sortedKeys {
-		w.redFunc(k, collectedKVs[k])
+		w.redFunc(k, collectedKVs[k], fp)
 	}
 	// Attempt atomic rename to final output file name
+	sb.Reset()
+	sb.WriteString("workbench/mr-out-")
+	sb.WriteString(strconv.Itoa(taskIndex))
+	filenameFinal := sb.String()
+	// NOTE: os.Rename is guaranteed to be atomic only on Unix systems.
+	// Additionally, it appears to be best practice to only rename within a
+	// the same directory (which is why we also initially place the final
+	// output file in the "workbench" temp file directory).
+	os.Rename(tf, filenameFinal)
 	return
 }
 
