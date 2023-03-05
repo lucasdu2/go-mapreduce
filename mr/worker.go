@@ -3,6 +3,7 @@ package mapreduce
 import (
 	"bufio"
 	"os"
+	"sort"
 	"strconv"
 	"strings"
 )
@@ -166,6 +167,14 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 			return err
 		}
 	}
+	// Sort keys to ensure ordering guarantees (see 4.2 of reference paper)
+	sortedKeys := make([]string, len(collectedKVs))
+	i := 0
+	for k, _ := range collectedKVs {
+		sortedKeys[i] = k
+		i++
+	}
+	sort.Strings(sortedKeys)
 	// Run Reduce on list of values associated with each key and write output
 	// to temporary file
 	// TODO: Need to figure out how to write to file. Do we want to open a file
@@ -174,8 +183,8 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	// want to write all the output at once? The latter would require an
 	// adjustment to the Reduce function interface and the addition of some
 	// intermediate data structure to store output data before write.
-	for key, values := range collectedKVs {
-		w.redFunc(key, values)
+	for _, k := range sortedKeys {
+		w.redFunc(k, collectedKVs[k])
 	}
 	// Attempt atomic rename to final output file name
 	return
