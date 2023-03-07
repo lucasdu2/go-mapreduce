@@ -255,6 +255,13 @@ func (c *Coordinator) CheckWorker() {
 	// same task, but one fails while the other succeeds. We need to work
 	// something into worker failed logic (in CheckWorker) that prevents
 	// an already completed task from being requeued.
+
+	// IDEA: Should add another field to workerInfo that tracks last seen
+	// timestamp. This field should be updated by this CheckWorker function.
+	// Then have some function that periodically checks this field and how much
+	// time has passed since the worker was last seen. If a certain amount of
+	// time has elapsed since the last seen time, we should set the worker to
+	// unhealthy and re-add its task the task queue.
 }
 
 // countInc implements an atomic increment for the coordinator's completed
@@ -295,5 +302,6 @@ func (c *Coordinator) setupReduce() {
 
 // Run Coordinator execution flow
 func (c *Coordinator) Run() {
+	// TODO
 	return
 }

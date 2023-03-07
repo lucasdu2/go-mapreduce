@@ -218,6 +218,10 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 
 // Run Worker execution flow
 func (w *Worker) Run() {
+	// TODO
+	// Initialize Worker struct
 	// Run heartbeat in the background as a goroutine
+	// Start main loop--send RPC asking for task to server, wait for response,
+	// run task, repeat
 	return
 }

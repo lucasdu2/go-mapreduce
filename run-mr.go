@@ -47,6 +47,7 @@ func main() {
 	// will simply be starting the coordinator and workers on a single local
 	// machine as concurrent goroutines that communicate using RPCs
 
+	// Move all R Reduce outputs out from workbench directory
 	// Combine all R Reduce outputs into single output file
 
 }
