@@ -2,6 +2,10 @@ package mapreduce
 
 import (
 	"errors"
+	"log"
+	"net"
+	"net/http"
+	"net/rpc"
 	"strconv"
 	"sync"
 )
@@ -111,7 +115,7 @@ type Coordinator struct {
 }
 
 // Create a new Coordinator
-func NewCoordinator(m, r, numWorkers int) (*Coordinator, error) {
+func newCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	coordinator := &Coordinator{}
 	// Fill in Coordinator fields
 	coordinator.M = m
@@ -231,6 +235,13 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		for !c.done {
 			c.cond.Wait()
 		}
+		// FIXME: There is a problem here--we are manipulating c.done in countInc,
+		// but if the next stage is Reduce, we are calling setupReduce and setting
+		// c.done to False immediately after setting it to True. There is a
+		// concurrency bug here, since it is possible that not every RPC
+		// handler goroutine will see the True before it gets set to False.
+		// So some threads may end up waiting forever, which is bad.
+
 		// If the next stage is Reduce, the task stack will have been refilled
 		// at this point and we will be able to pop from it. If the stack is
 		// still empty, the Reduce stage is complete, theMapReduce operation is
@@ -272,13 +283,13 @@ func (c *Coordinator) countInc() {
 	c.count++
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
+		// Set done to true
+		c.done = true
 		// Set up for Reduce stage or end MapReduce operation
 		if c.stage == "map" {
 			c.stage = "reduce"
 			c.setupReduce()
 		}
-		// Set done to true
-		c.done = true
 		// Broadcast to all waiting RPC handlers that stage is over
 		c.cond.Broadcast()
 	}
@@ -301,7 +312,16 @@ func (c *Coordinator) setupReduce() {
 }
 
 // Run Coordinator execution flow
-func (c *Coordinator) Run() {
-	// TODO
+func CoordinatorRun(m, r, numWorkers int) {
+	// Initialize Coordinator struct
+	c := newCoordinator(m, r, numWorkers)
+	// Start RPC server
+	rpc.Register(c)
+	rpc.HandleHTTP()
+	l, err := net.Listen("tcp", ":6969")
+	if err != nil {
+		log.Fatal("listen error: ", err)
+	}
+	http.Serve(l, nil)
 	return
 }
