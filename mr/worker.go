@@ -11,13 +11,14 @@ import (
 type TaskRequest struct {
 	workerIndex       int      // Index of worker
 	prevTaskIndex     int      // Index of previous task
+	prevTaskStage     string   // Stage that previous task belonged to
 	prevTaskCompleted bool     // Indicate if previously assigned task completed
 	outputFiles       []string // Return completed task output files
 }
 
 type Worker struct {
 	workerIndex int // Identifying index of worker
-	R           int // Number of Reduce tasks (used in partitioning)
+	r           int // Number of Reduce tasks (used in partitioning)
 	mapFunc     func(string, *map[string]string) error
 	redFunc     func(string, []string, *os.File) error
 	partFunc    func(string, int) int
@@ -112,7 +113,7 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 	// if a key maps to multiple values, they will be on separate lines (see
 	// previous note).
 	for key, values := range storedict {
-		p := w.partFunc(key, w.R)
+		p := w.partFunc(key, w.r)
 		sb.Reset()
 		sb.WriteString(key)
 		sb.WriteString(",")
@@ -217,10 +218,16 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 }
 
 // Run Worker execution flow
-func (w *Worker) Run() {
-	// TODO
+func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 	// Initialize Worker struct
-	// Run heartbeat in the background as a goroutine
+	w := &Worker{
+		workerIndex: index,
+		r:           r,
+		mapFunc:     mapFunc.(func(string, *map[string]string) error),
+		redFunc:     redFunc.(func(string, []string, *os.File) error),
+		partFunc:    partFunc.(func(string, int) int),
+	}
+	// TODO: Run heartbeat in the background as a goroutine
 	// Start main loop--send RPC asking for task to server, wait for response,
 	// run task, repeat
 	return

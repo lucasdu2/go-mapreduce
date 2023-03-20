@@ -105,13 +105,13 @@ type Coordinator struct {
 	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
 	intFilesLock      *sync.Mutex  // Lock to protect intermediateFiles
 	intermediateFiles [][]string   // Locations of intermediate files
-	stage             string       // Declare current stage (Map or Reduce)
 
-	// Fields for atomic task counter
-	cond  *sync.Cond // Used to synchronize stage completion
-	total int        // Total tasks in a stage
-	count int        // Counter of completed tasks
-	done  bool       // Indicates when stage is over
+	// Fields for stage transition coordination
+	total     int         // Total tasks in a stage
+	stageLock *sync.Mutex // Lock to protect counter and stage string
+	count     int         // Counter of completed tasks
+	stage     string      // Current stage (Map, Reduce, or Finished)
+
 }
 
 // Create a new Coordinator
@@ -152,14 +152,11 @@ func newCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 		coordinator.intermediateFiles[i] = make([]string, m)
 	}
 
-	coordinator.stage = "map"
-
-	// Initialize fields for atomic task counter
-	coordinator.cond = sync.NewCond(&sync.Mutex{})
 	// Initialize total for map stage
 	coordinator.total = m
 	coordinator.count = 0
-	coordinator.done = false
+	coordinator.stage = "map"
+
 	return coordinator, nil
 }
 
@@ -185,9 +182,20 @@ func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 	}
 }
 
+func (c *Coordinator) checkStage() string {
+	c.stageLock.Lock()
+	defer c.stageLock.Unlock()
+	return c.stage
+}
+
 func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	c.taskCompLock.Lock()
 	defer c.taskCompLock.Unlock()
+
+	// If the completed task is for a previous stage, reject the completion
+	if args.prevTaskStage != c.checkStage() {
+		return
+	}
 
 	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.prevTaskIndex] {
@@ -230,17 +238,22 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	if err != nil {
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
 		c.workers[args.workerIndex].taskIndex = -1
+		// FIXME: We want workers to be able to pick up new tasks if they enter
+		// the taskAssigner queue due to another worker's failure...I don't think
+		// the current code covers this case
 		// NOTE: For why we should wrap the Wait() in a for loop spinning on
 		// done, see here: https://stackoverflow.com/questions/33841585
-		for !c.done {
+		for (!c.stageDone) && (!c.reduceStarted) {
+			// TODO: Can also try to just spin on c.taskAssigner.pop() with a
+			// random wait between attempts? Just also need a way to indicate
+			// that the entire MapReduce op is over so we don't get stuck
+			// infinitely.
+			reply, err = c.taskAssigner.pop()
+			if err != nil {
+				break
+			}
 			c.cond.Wait()
 		}
-		// FIXME: There is a problem here--we are manipulating c.done in countInc,
-		// but if the next stage is Reduce, we are calling setupReduce and setting
-		// c.done to False immediately after setting it to True. There is a
-		// concurrency bug here, since it is possible that not every RPC
-		// handler goroutine will see the True before it gets set to False.
-		// So some threads may end up waiting forever, which is bad.
 
 		// If the next stage is Reduce, the task stack will have been refilled
 		// at this point and we will be able to pop from it. If the stack is
@@ -278,37 +291,58 @@ func (c *Coordinator) CheckWorker() {
 // countInc implements an atomic increment for the coordinator's completed
 // tasks counter
 func (c *Coordinator) countInc() {
-	c.cond.L.Lock()
-	defer c.cond.L.Unlock()
+	c.stageLock.Lock()
+	defer c.stageLock.Unlock()
 	c.count++
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
 		// Set done to true
-		c.done = true
+		c.stageDone = true
 		// Set up for Reduce stage or end MapReduce operation
 		if c.stage == "map" {
 			c.stage = "reduce"
+			c.count = 0
 			c.setupReduce()
+		} else if c.stage == "reduce" {
+			c.stage = "finished"
 		}
-		// Broadcast to all waiting RPC handlers that stage is over
-		c.cond.Broadcast()
 	}
 }
 
-// Set up Coordinator for Reduce stage
-func (c *Coordinator) setupReduce() {
+func (c *Coordinator) createReduceTaskCompletionMap() {
 	// Construct taskCompletion map (initialize for Reduce stage)
 	taskCompletion := make(map[int]bool)
 	for i := 0; i < c.R; i++ {
 		taskCompletion[i] = false
 	}
+
+	c.taskCompLock.Lock()
+	defer c.taskCompLock.Unlock()
+
 	c.taskCompletion = taskCompletion
-	// Construct taskAssigner taskStack (initialize for Map stage)
-	c.taskAssigner = newReduceTaskStack(c.intermediateFiles)
-	c.stage = "reduce"
+
+}
+
+// Set up Coordinator for Reduce stage
+func (c *Coordinator) setupReduce() {
+	// Reset expected total to R (number of Reduce tasks)
 	c.total = c.R
-	c.count = 0
-	c.done = false
+
+	// Set up taskCompletion map for Reduce stage
+	c.createReduceTaskCompletionMap()
+
+	// Fill out taskAssigner taskStack (initialize for Map stage)
+	c.taskAssigner.mu.Lock()
+	defer c.taskAssigner.mu.Unlock()
+	for i, fnames := range c.intermediateFiles {
+		// Create TaskInfo struct for each task file
+		ti := &TaskInfo{
+			taskIndex:     i,
+			filesLocation: fnames,
+			stage:         "reduce",
+		}
+		c.taskAssigner.stack = append(c.taskAssigner.stack, ti)
+	}
 }
 
 // Run Coordinator execution flow
