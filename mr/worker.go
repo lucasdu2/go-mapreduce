@@ -229,6 +229,8 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 	}
 	// TODO: Run heartbeat in the background as a goroutine
 	// Start main loop--send RPC asking for task to server, wait for response,
-	// run task, repeat
+	// run task, repeat. If server does not respond for a certain amount of time
+	// assume it is dead/operation is over and shut down. This should prevent an
+	// infinite loop if the coordinator dies.
 	return
 }

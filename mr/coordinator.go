@@ -3,11 +3,13 @@ package mapreduce
 import (
 	"errors"
 	"log"
+	"math/rand"
 	"net"
 	"net/http"
 	"net/rpc"
 	"strconv"
 	"sync"
+	"time"
 )
 
 // Set up supporting structs for coordinator
@@ -238,35 +240,39 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	if err != nil {
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
 		c.workers[args.workerIndex].taskIndex = -1
-		// FIXME: We want workers to be able to pick up new tasks if they enter
-		// the taskAssigner queue due to another worker's failure...I don't think
-		// the current code covers this case
-		// NOTE: For why we should wrap the Wait() in a for loop spinning on
-		// done, see here: https://stackoverflow.com/questions/33841585
-		for (!c.stageDone) && (!c.reduceStarted) {
-			// TODO: Can also try to just spin on c.taskAssigner.pop() with a
-			// random wait between attempts? Just also need a way to indicate
-			// that the entire MapReduce op is over so we don't get stuck
-			// infinitely.
-			reply, err = c.taskAssigner.pop()
-			if err != nil {
-				break
-			}
-			c.cond.Wait()
-		}
-
-		// If the next stage is Reduce, the task stack will have been refilled
-		// at this point and we will be able to pop from it. If the stack is
-		// still empty, the Reduce stage is complete, theMapReduce operation is
-		// over, and we should return.
-		reply, err = c.taskAssigner.pop()
-		if err != nil {
-			// MapReduce operation is over
-			// TODO: Should probably send a message in reply to tell worker to
-			// shut down
-			// TODO: Should also clean up all intermediate files that we used
+		// To synchronize stage completion while still allowing waiting threads
+		// to take requeued tasks, we spin on c.taskAssigner.pop() with a
+		// random wait between attempts.
+		currentStage := c.checkStage()
+		if currentStage == "finished" {
+			// TODO: Handle MapReduce finished case here
+			// Should send some kind of "done" message back in the reply. Wait for
+			// all workers to respond that they have shut down before shutting down
+			// the coordinator.
 			return nil
 		}
+		for currentStage == c.checkStage() {
+			reply, err = c.taskAssigner.pop()
+			// If stage is not over, but there are no outstanding tasks in the
+			// queue, we wait a random time and retry
+			if err != nil {
+				waitDuration := rand.Intn(250)
+				time.Sleep(waitDuration * time.Millisecond)
+			}
+		}
+	}
+	if c.checkStage() == "finished" {
+		// TODO: Handle MapReduce finished case here
+		// Should send some kind of "done" message back in the reply. Wait for
+		// all workers to respond that they have shut down before shutting down
+		// the coordinator.
+		// Could also just send a "done" message on a channel back the calling
+		// main function in run-mr.go, exit main there. Go should then clean
+		// up all remaining goroutines (e.g. the workers) on its own.
+		// If we do this, might as well just send "done" out in countInc, the
+		// moment that we know the stage is "finished" are we are done. There
+		// may be no need to handle the "finished" stage case in this function.
+		return nil
 	}
 	// Update worker status (in workers []workerInfo) with newly assigned task
 	c.workers[args.workerIndex].taskIndex = reply.taskIndex
@@ -289,7 +295,9 @@ func (c *Coordinator) CheckWorker() {
 }
 
 // countInc implements an atomic increment for the coordinator's completed
-// tasks counter
+// tasks counter. Once the task counter hits the total expected completed tasks
+// for a stage, countInc will also update the current stage string in the same
+// atomic operation.
 func (c *Coordinator) countInc() {
 	c.stageLock.Lock()
 	defer c.stageLock.Unlock()
