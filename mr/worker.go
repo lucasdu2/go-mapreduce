@@ -2,12 +2,16 @@ package mapreduce
 
 import (
 	"bufio"
+	"log"
+	"net/rpc"
 	"os"
 	"sort"
 	"strconv"
 	"strings"
 )
 
+// TODO: Generally, figure out if we need to capitalize any of these struct
+// fields for exporting.
 type TaskRequest struct {
 	workerIndex       int      // Index of worker
 	prevTaskIndex     int      // Index of previous task
@@ -228,9 +232,32 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 		partFunc:    partFunc.(func(string, int) int),
 	}
 	// TODO: Run heartbeat in the background as a goroutine
-	// Start main loop--send RPC asking for task to server, wait for response,
+	// TODO: Start main loop--send RPC asking for task to server, wait for response,
 	// run task, repeat. If server does not respond for a certain amount of time
 	// assume it is dead/operation is over and shut down. This should prevent an
 	// infinite loop if the coordinator dies.
+	// Set up request args and reply variables
+	args := &TaskRequest{
+		workerIndex: w.workerIndex,
+	}
+	var reply *TaskInfo
+	client, err := rpc.DialHTTP("tcp", "localhost"+":6969")
+	if err != nil {
+		log.Fatal("dialing:", err)
+	}
+	done = false
+	for !done {
+		err = client.Call("Coordinator.AssignTask", args, reply)
+		if err != nil {
+			log.Printf("error assigning task: %v", err)
+			continue
+		}
+		if reply.stage == "finished" {
+			break
+		}
+		// TODO: Need to figure out how to handle case where Call hangs, is there
+		// a way to implement a timeout? We should kill the worker if the timeout
+		// is too long.
+	}
 	return
 }

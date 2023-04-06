@@ -26,9 +26,9 @@ type workerInfo struct {
 // handle both a single input file (Map task) and a list of input files (Reduce
 // task).
 type TaskInfo struct {
-	taskIndex     int
-	filesLocation []string
-	stage         string
+	TaskIndex     int
+	FilesLocation []string
+	Stage         string
 }
 
 // taskStack implements a concurrent stack type to manage task assignments
