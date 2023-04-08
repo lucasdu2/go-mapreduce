@@ -39,7 +39,7 @@ func main() {
 	errCheck(err)
 
 	// Split input using application-specified InputSplitter function
-	err = splitter.(func(string, int) error)(inputFile, m)
+	err = splitter.(func(string, int) error)(*inputFile, *m)
 	errCheck(err)
 
 	// Spawn coordinator and worker programs

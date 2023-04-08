@@ -26,9 +26,9 @@ type workerInfo struct {
 // handle both a single input file (Map task) and a list of input files (Reduce
 // task).
 type TaskInfo struct {
-	TaskIndex     int
-	FilesLocation []string
-	Stage         string
+	taskIndex     int
+	filesLocation []string
+	stage         string
 }
 
 // taskStack implements a concurrent stack type to manage task assignments
@@ -99,8 +99,8 @@ type Coordinator struct {
 	// considered terminated, a worker should never submit overlapping requests
 	// for a new task. So each index in workers will be modified sequentially,
 	// thus precluding the need for a lock.
-	M                 int          // Number of Map tasks
-	R                 int          // Number of Reduce tasks
+	m                 int          // Number of Map tasks
+	r                 int          // Number of Reduce tasks
 	workers           []workerInfo // Tracks worker health, assigned task
 	taskCompLock      *sync.Mutex  // Lock to protect access to taskCompletion
 	taskCompletion    map[int]bool // Tracks task status (completed or not)
@@ -120,8 +120,8 @@ type Coordinator struct {
 func newCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	coordinator := &Coordinator{}
 	// Fill in Coordinator fields
-	coordinator.M = m
-	coordinator.R = r
+	coordinator.m = m
+	coordinator.r = r
 	// Construct workers slice
 	workers := make([]workerInfo, numWorkers)
 	for i := 0; i < numWorkers; i++ {
@@ -212,6 +212,23 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 
 }
 
+func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
+	c.taskCompLock.Lock()
+	defer c.taskCompLock.Unlock()
+
+	// If the failed task is for a previous stage, do nothing
+	if args.prevTaskStage != c.checkStage() {
+		return
+	}
+
+	// If task is not already completed by another worker, requeue the task
+	if !c.taskCompletion[args.prevTaskIndex] {
+		// If the previous task failed, the prevTaskInfo filed of TaskRequest
+		// should be filled out with the previous TaskInfo struct
+		c.taskAssigner.push(args.prevTaskInfo)
+	}
+
+}
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// Handle logic when a worker has completed a task
 	if args.prevTaskCompleted {
@@ -230,6 +247,9 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		// incorrect and so we must still synchronize this entire section of
 		// code with a lock.
 		c.handleTaskCompletion(args)
+	} else {
+		// Handle logic when a worker was not able to complete a task
+		c.handleTaskFailure(args)
 	}
 	// Assign new task to worker, if possible
 	var err error
@@ -320,7 +340,7 @@ func (c *Coordinator) countInc() {
 func (c *Coordinator) createReduceTaskCompletionMap() {
 	// Construct taskCompletion map (initialize for Reduce stage)
 	taskCompletion := make(map[int]bool)
-	for i := 0; i < c.R; i++ {
+	for i := 0; i < c.r; i++ {
 		taskCompletion[i] = false
 	}
 
@@ -334,7 +354,7 @@ func (c *Coordinator) createReduceTaskCompletionMap() {
 // Set up Coordinator for Reduce stage
 func (c *Coordinator) setupReduce() {
 	// Reset expected total to R (number of Reduce tasks)
-	c.total = c.R
+	c.total = c.r
 
 	// Set up taskCompletion map for Reduce stage
 	c.createReduceTaskCompletionMap()

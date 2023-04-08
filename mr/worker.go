@@ -13,11 +13,12 @@ import (
 // TODO: Generally, figure out if we need to capitalize any of these struct
 // fields for exporting.
 type TaskRequest struct {
-	workerIndex       int      // Index of worker
-	prevTaskIndex     int      // Index of previous task
-	prevTaskStage     string   // Stage that previous task belonged to
-	prevTaskCompleted bool     // Indicate if previously assigned task completed
-	outputFiles       []string // Return completed task output files
+	workerIndex       int       // Index of worker
+	prevTaskIndex     int       // Index of previous task
+	prevTaskStage     string    // Stage that previous task belonged to
+	prevTaskCompleted bool      // Indicate if previously assigned task completed
+	outputFiles       []string  // Return completed task output files
+	prevTaskInfo      *TaskInfo // Previous TaskInfo struct
 }
 
 type Worker struct {
@@ -255,9 +256,30 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 		if reply.stage == "finished" {
 			break
 		}
-		// TODO: Need to figure out how to handle case where Call hangs, is there
-		// a way to implement a timeout? We should kill the worker if the timeout
-		// is too long.
+		if reply.stage == "map" {
+			intFiles, err := w.runMap(reply.filesLocation[0], reply.taskIndex)
+			args.prevTaskIndex = reply.taskIndex
+			args.prevTaskStage = reply.stage
+			if err == nil {
+				args.prevTaskCompleted = true
+				args.outputFiles = intFiles
+			} else {
+				args.prevTaskCompleted = false
+				args.prevTaskInfo = reply
+			}
+			continue
+		}
+		if reply.stage == "reduce" {
+			err := w.runReduce(reply.filesLocation, taskIndex)
+			args.prevTaskIndex = reply.taskIndex
+			args.prevTaskStage = reply.stage
+			if err == nil {
+				args.prevTaskCompleted = true
+			} else {
+				args.prevTaskCompleted = false
+				args.prevTaskInfo = reply
+			}
+		}
 	}
 	return
 }
