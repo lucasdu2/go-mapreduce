@@ -242,7 +242,7 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 		workerIndex: w.workerIndex,
 	}
 	var reply *TaskInfo
-	client, err := rpc.DialHTTP("tcp", "localhost"+":6969")
+	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
@@ -250,10 +250,12 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 	for !done {
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
-			log.Printf("error assigning task: %v", err)
-			continue
+			log.Printf("error assigning task: %v\n", err)
+			log.Println("assuming coordinator has exited, exiting worker")
+			break
 		}
 		if reply.stage == "finished" {
+			log.Printf("MapReduce operation finished, exiting worker")
 			break
 		}
 		if reply.stage == "map" {

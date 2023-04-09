@@ -265,10 +265,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		// random wait between attempts.
 		currentStage := c.checkStage()
 		if currentStage == "finished" {
-			// TODO: Handle MapReduce finished case here
-			// Should send some kind of "done" message back in the reply. Wait for
-			// all workers to respond that they have shut down before shutting down
-			// the coordinator.
+			reply = &TaskInfo{stage: "finished"}
 			return nil
 		}
 		for currentStage == c.checkStage() {
@@ -282,16 +279,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		}
 	}
 	if c.checkStage() == "finished" {
-		// TODO: Handle MapReduce finished case here
-		// Should send some kind of "done" message back in the reply. Wait for
-		// all workers to respond that they have shut down before shutting down
-		// the coordinator.
-		// Could also just send a "done" message on a channel back the calling
-		// main function in run-mr.go, exit main there. Go should then clean
-		// up all remaining goroutines (e.g. the workers) on its own.
-		// If we do this, might as well just send "done" out in countInc, the
-		// moment that we know the stage is "finished" are we are done. There
-		// may be no need to handle the "finished" stage case in this function.
+		reply = &TaskInfo{stage: "finished"}
 		return nil
 	}
 	// Update worker status (in workers []workerInfo) with newly assigned task
@@ -300,18 +288,18 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 }
 
 func (c *Coordinator) CheckWorker() {
-	// TODO: Is it possible for a task to be completed but still in the
-	// taskAssigner stack? For example, if we have 2 workers working on the
-	// same task, but one fails while the other succeeds. We need to work
-	// something into worker failed logic (in CheckWorker) that prevents
-	// an already completed task from being requeued.
-
 	// IDEA: Should add another field to workerInfo that tracks last seen
 	// timestamp. This field should be updated by this CheckWorker function.
 	// Then have some function that periodically checks this field and how much
 	// time has passed since the worker was last seen. If a certain amount of
 	// time has elapsed since the last seen time, we should set the worker to
 	// unhealthy and re-add its task the task queue.
+	// TODO: Is it possible for a task to be completed but still in the
+	// taskAssigner stack? For example, if we have 2 workers working on the
+	// same task, but one fails while the other succeeds. We need to work
+	// something into worker failed logic (in CheckWorker) that prevents
+	// an already completed task from being requeued.
+
 }
 
 // countInc implements an atomic increment for the coordinator's completed
@@ -333,6 +321,11 @@ func (c *Coordinator) countInc() {
 			c.setupReduce()
 		} else if c.stage == "reduce" {
 			c.stage = "finished"
+			// TODO: Also send a "done" message on a channel, which should be
+			// captured in CoordinatorRun. When a "done" message is received
+			// in CoordinatorRun, we should shutdown gracefully. We should let
+			// all existing RPC connections complete, take no new connections,
+			// and exit the coordinator.
 		}
 	}
 }
@@ -380,10 +373,23 @@ func CoordinatorRun(m, r, numWorkers int) {
 	// Start RPC server
 	rpc.Register(c)
 	rpc.HandleHTTP()
-	l, err := net.Listen("tcp", ":6969")
+	l, err := net.Listen("tcp", ":1234")
 	if err != nil {
 		log.Fatal("listen error: ", err)
 	}
-	http.Serve(l, nil)
+	// TODO: Figure out why we start a new server here, or if we need to use the
+	// already-started RPC server rpc.DefaultServer...
+	srv := &http.Server{}
+	go func() {
+		err := srv.Serve(l)
+		if err != http.ErrServerClosed {
+			log.Fatalf("HTTP server error: %v", err)
+		}
+		log.Println("Stopped serving new connections.")
+	}()
+	// TODO: Create termination channel, implement Shutdown when termination
+	// message is passed on channel. Termination channel should be part of the
+	// Coordinator struct and should be accessible from main() as well.
+	// TODO: Figure out context timeout usage in Shutdown--do we need a timeout?
 	return
 }
