@@ -1,6 +1,7 @@
 package mapreduce
 
 import (
+	"context"
 	"errors"
 	"log"
 	"math/rand"
@@ -114,10 +115,12 @@ type Coordinator struct {
 	count     int         // Counter of completed tasks
 	stage     string      // Current stage (Map, Reduce, or Finished)
 
+	// Channel to communicate termination
+	killChan chan int
 }
 
 // Create a new Coordinator
-func newCoordinator(m, r, numWorkers int) (*Coordinator, error) {
+func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	coordinator := &Coordinator{}
 	// Fill in Coordinator fields
 	coordinator.m = m
@@ -158,6 +161,9 @@ func newCoordinator(m, r, numWorkers int) (*Coordinator, error) {
 	coordinator.total = m
 	coordinator.count = 0
 	coordinator.stage = "map"
+
+	// Set up termination channel
+	coordinator.killChan = kc
 
 	return coordinator, nil
 }
@@ -367,9 +373,12 @@ func (c *Coordinator) setupReduce() {
 }
 
 // Run Coordinator execution flow
-func CoordinatorRun(m, r, numWorkers int) {
+func CoordinatorRun(m, r, numWorkers int, kc chan int) {
 	// Initialize Coordinator struct
-	c := newCoordinator(m, r, numWorkers)
+	c, err := newCoordinator(m, r, numWorkers, kc)
+	if err != nil {
+		log.Fatal("error creating new coordinator: ", err)
+	}
 	// Start RPC server
 	rpc.Register(c)
 	rpc.HandleHTTP()
@@ -379,6 +388,10 @@ func CoordinatorRun(m, r, numWorkers int) {
 	}
 	// TODO: Figure out why we start a new server here, or if we need to use the
 	// already-started RPC server rpc.DefaultServer...
+	// ANSWER: Need to start a new HTTP server here, see this link (take notes
+	// on this later): medium.com/rungo/building-rpc-remote-procedure-call-
+	// network-in-go-5bfebe90f7e9. Basically, we need an RPC server (defined
+	// above) and an HTTP server to host the RPC server (defined below).
 	srv := &http.Server{}
 	go func() {
 		err := srv.Serve(l)
@@ -390,6 +403,10 @@ func CoordinatorRun(m, r, numWorkers int) {
 	// TODO: Create termination channel, implement Shutdown when termination
 	// message is passed on channel. Termination channel should be part of the
 	// Coordinator struct and should be accessible from main() as well.
-	// TODO: Figure out context timeout usage in Shutdown--do we need a timeout?
+	// Block on killChan
+	<-c.killChan
+	if err := srv.Shutdown(context.Background()); err != nil {
+		log.Fatal("HTTP shutdown error: ", err)
+	}
 	return
 }

@@ -3,6 +3,9 @@ package main
 import (
 	"flag"
 	"plugin"
+
+	// TODO: Need to export the mapreduce package with this name
+	"github.com/lucasdu2/mapreduce"
 )
 
 func errCheck(e error) {
@@ -45,7 +48,14 @@ func main() {
 	// Spawn coordinator and worker programs
 	// NOTE: Because we do not have access to an actual cluster of servers, we
 	// will simply be starting the coordinator and workers on a single local
-	// machine as concurrent goroutines that communicate using RPCs
+	// machine as concurrent goroutines that communicate using RPCs.
+	for i := 0; i < numWorkers; i++ {
+		go mapreduce.WorkerRun(i, r, mapFunc, redFunc, partitioner)
+	}
+	// Create termination channel
+	killChan := make(chan int, 1)
+	mapreduce.CoordinatorRun(m, r, numWorkers, killChan)
+	// TODO: Implement manual interrupt of the coordinator RPC server below...
 
 	// Move all R Reduce outputs out from workbench directory
 	// Combine all R Reduce outputs into single output file
