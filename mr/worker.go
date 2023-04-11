@@ -5,6 +5,7 @@ import (
 	"log"
 	"net/rpc"
 	"os"
+	"plugin"
 	"sort"
 	"strconv"
 	"strings"
@@ -24,7 +25,7 @@ type TaskRequest struct {
 type Worker struct {
 	workerIndex int // Identifying index of worker
 	r           int // Number of Reduce tasks (used in partitioning)
-	mapFunc     func(string, *map[string]string) error
+	mapFunc     func(string, map[string][]string) error
 	redFunc     func(string, []string, *os.File) error
 	partFunc    func(string, int) int
 }
@@ -75,7 +76,7 @@ func (w *Worker) writeIntermediateFiles(taskIndex int,
 			return nil, err
 		}
 		// Add intermediate file name to outFiles
-		outFiles = outFiles.append(fp.Name())
+		outFiles = append(outFiles, fp.Name())
 	}
 	return outFiles, nil
 }
@@ -93,11 +94,11 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 		return nil, err
 	}
 	// Convert byte array to string
-	data = string(data)
+	dataString := string(data)
 	// Run Map function on data
 	// Create dict to map intermediate keys to list of associated values
 	storedict := make(map[string][]string)
-	err = w.mapFunc(data, storedict)
+	err = w.mapFunc(dataString, storedict)
 	if err != nil {
 		return nil, err
 	}
@@ -133,7 +134,7 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 		}
 	}
 	// Write resulting data to intermediate files
-	outFiles, err := w.writeIntermediateFiles(taskIndex, partitionToKVs)
+	outFiles, err = w.writeIntermediateFiles(taskIndex, partitionToKVs)
 	if err != nil {
 		return nil, err
 	}
@@ -155,12 +156,12 @@ func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 		kv := fileScanner.Text()
 		// kv should be a string of the form "key,value"; this is the form
 		// specified when we write to intermediate files in runMap()
-		kvSplit = strings.Split(kv, ",")
+		kvSplit := strings.Split(kv, ",")
 		key := kvSplit[0]
 		value := kvSplit[1]
 		sorted[key] = append(sorted[key], value)
 	}
-
+	return nil
 }
 
 func (w *Worker) runReduce(fnames []string, taskIndex int) error {
@@ -188,7 +189,7 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	sb.Reset()
 	sb.WriteString("out-")
 	sb.WriteString(strconv.Itoa(taskIndex))
-	sb.Writestring("-worker")
+	sb.WriteString("-worker")
 	sb.WriteString(strconv.Itoa(w.workerIndex))
 	filenamePrefix := sb.String()
 	// Create temp file in workbench for output file
@@ -218,17 +219,20 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	// Additionally, it appears to be best practice to only rename within a
 	// the same directory (which is why we also initially place the final
 	// output file in the "workbench" temp file directory).
-	os.Rename(tf, filenameFinal)
-	return
+	err = os.Rename(tf, filenameFinal)
+	if err != nil {
+		return err
+	}
+	return nil
 }
 
 // Run Worker execution flow
-func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
+func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 	// Initialize Worker struct
 	w := &Worker{
 		workerIndex: index,
 		r:           r,
-		mapFunc:     mapFunc.(func(string, *map[string]string) error),
+		mapFunc:     mapFunc.(func(string, map[string][]string) error),
 		redFunc:     redFunc.(func(string, []string, *os.File) error),
 		partFunc:    partFunc.(func(string, int) int),
 	}
@@ -246,8 +250,7 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
-	done = false
-	for !done {
+	for true {
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
 			log.Printf("error assigning task: %v\n", err)
@@ -272,7 +275,7 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 			continue
 		}
 		if reply.stage == "reduce" {
-			err := w.runReduce(reply.filesLocation, taskIndex)
+			err := w.runReduce(reply.filesLocation, reply.taskIndex)
 			args.prevTaskIndex = reply.taskIndex
 			args.prevTaskStage = reply.stage
 			if err == nil {
@@ -283,5 +286,4 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc Symbol) {
 			}
 		}
 	}
-	return
 }

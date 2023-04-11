@@ -185,7 +185,10 @@ func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 	for _, filename := range outputFiles {
 		// Get Reduce partition index fron file name, given the name format
 		// noted above
-		index := strconv.Atoi(filename[len(filename)-1:])
+		index, err := strconv.Atoi(filename[len(filename)-1:])
+		if err != nil {
+			log.Panic("Unable to get Reduce partition index from file name")
+		}
 		c.intermediateFiles[index] = append(c.intermediateFiles[index], filename)
 	}
 }
@@ -279,7 +282,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			// If stage is not over, but there are no outstanding tasks in the
 			// queue, we wait a random time and retry
 			if err != nil {
-				waitDuration := rand.Intn(250)
+				waitDuration := time.Duration(rand.Intn(250))
 				time.Sleep(waitDuration * time.Millisecond)
 			}
 		}
@@ -318,8 +321,6 @@ func (c *Coordinator) countInc() {
 	c.count++
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
-		// Set done to true
-		c.stageDone = true
 		// Set up for Reduce stage or end MapReduce operation
 		if c.stage == "map" {
 			c.stage = "reduce"
@@ -327,11 +328,9 @@ func (c *Coordinator) countInc() {
 			c.setupReduce()
 		} else if c.stage == "reduce" {
 			c.stage = "finished"
-			// TODO: Also send a "done" message on a channel, which should be
-			// captured in CoordinatorRun. When a "done" message is received
-			// in CoordinatorRun, we should shutdown gracefully. We should let
-			// all existing RPC connections complete, take no new connections,
-			// and exit the coordinator.
+			// Also, send termination message on killChan to start graceful
+			// shutdown of the server
+			c.killChan <- 1
 		}
 	}
 }
@@ -400,13 +399,11 @@ func CoordinatorRun(m, r, numWorkers int, kc chan int) {
 		}
 		log.Println("Stopped serving new connections.")
 	}()
-	// TODO: Create termination channel, implement Shutdown when termination
-	// message is passed on channel. Termination channel should be part of the
-	// Coordinator struct and should be accessible from main() as well.
 	// Block on killChan
 	<-c.killChan
+	// Shutdown server gracefully when termination message is received on
+	// killChan
 	if err := srv.Shutdown(context.Background()); err != nil {
 		log.Fatal("HTTP shutdown error: ", err)
 	}
-	return
 }

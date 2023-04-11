@@ -2,6 +2,9 @@ package main
 
 import (
 	"flag"
+	"log"
+	"os"
+	"os/signal"
 	"plugin"
 
 	// TODO: Need to export the mapreduce package with this name
@@ -54,9 +57,15 @@ func main() {
 	}
 	// Create termination channel
 	killChan := make(chan int, 1)
+	// Handle manual interrupt of MapReduce operation
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		<-signalChan
+		killChan <- 1
+		log.Println("Shutting down coordinator, exiting MapReduce operation")
+	}()
 	mapreduce.CoordinatorRun(m, r, numWorkers, killChan)
-	// TODO: Implement manual interrupt of the coordinator RPC server below...
-
 	// Move all R Reduce outputs out from workbench directory
 	// Combine all R Reduce outputs into single output file
 
