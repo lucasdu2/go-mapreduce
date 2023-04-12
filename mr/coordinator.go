@@ -1,4 +1,4 @@
-package mapreduce
+package mr
 
 import (
 	"context"
@@ -22,16 +22,6 @@ type workerInfo struct {
 	taskIndex int
 }
 
-// TaskInfo defines a struct to pass information about a Map or Reduce task to
-// a worker. We define filesLocation as a slice of string slices in order to
-// handle both a single input file (Map task) and a list of input files (Reduce
-// task).
-type TaskInfo struct {
-	taskIndex     int
-	filesLocation []string
-	stage         string
-}
-
 // taskStack implements a concurrent stack type to manage task assignments
 type taskStack struct {
 	mu    sync.Mutex
@@ -45,9 +35,9 @@ func newMapTaskStack(taskFiles []string) *taskStack {
 	for i, fname := range taskFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
-			taskIndex:     i,
-			filesLocation: []string{fname},
-			stage:         "map",
+			TaskIndex:     i,
+			FilesLocation: []string{fname},
+			Stage:         "map",
 		}
 
 		ts.stack = append(ts.stack, ti)
@@ -61,9 +51,9 @@ func newReduceTaskStack(taskFiles [][]string) *taskStack {
 	for i, fnames := range taskFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
-			taskIndex:     i,
-			filesLocation: fnames,
-			stage:         "reduce",
+			TaskIndex:     i,
+			FilesLocation: fnames,
+			Stage:         "reduce",
 		}
 		ts.stack = append(ts.stack, ti)
 	}
@@ -168,7 +158,7 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	return coordinator, nil
 }
 
-func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
+func (c *Coordinator) addToIntermediateFiles(OutputFiles []string) {
 	// Acquire lock before updating intermediateFiles slice
 	// See NOTE in Coordinator struct for reasoning
 	c.intFilesLock.Lock()
@@ -182,7 +172,7 @@ func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 	// This will be the format that the workers must adhere to when creating
 	// intermediate files and is the format assumed here.
 
-	for _, filename := range outputFiles {
+	for _, filename := range OutputFiles {
 		// Get Reduce partition index fron file name, given the name format
 		// noted above
 		index, err := strconv.Atoi(filename[len(filename)-1:])
@@ -204,17 +194,17 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	defer c.taskCompLock.Unlock()
 
 	// If the completed task is for a previous stage, reject the completion
-	if args.prevTaskStage != c.checkStage() {
+	if args.PrevTaskStage != c.checkStage() {
 		return
 	}
 
 	// If task is not already completed, run task completion flow
-	if !c.taskCompletion[args.prevTaskIndex] {
+	if !c.taskCompletion[args.PrevTaskIndex] {
 		if c.stage == "map" {
-			c.addToIntermediateFiles(args.outputFiles)
+			c.addToIntermediateFiles(args.OutputFiles)
 		}
 		// Set task status to completed
-		c.taskCompletion[args.prevTaskIndex] = true
+		c.taskCompletion[args.PrevTaskIndex] = true
 		// Increment completed tasks counter
 		c.countInc()
 	}
@@ -226,21 +216,21 @@ func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
 	defer c.taskCompLock.Unlock()
 
 	// If the failed task is for a previous stage, do nothing
-	if args.prevTaskStage != c.checkStage() {
+	if args.PrevTaskStage != c.checkStage() {
 		return
 	}
 
 	// If task is not already completed by another worker, requeue the task
-	if !c.taskCompletion[args.prevTaskIndex] {
+	if !c.taskCompletion[args.PrevTaskIndex] {
 		// If the previous task failed, the prevTaskInfo filed of TaskRequest
 		// should be filled out with the previous TaskInfo struct
-		c.taskAssigner.push(args.prevTaskInfo)
+		c.taskAssigner.push(args.PrevTaskInfo)
 	}
 
 }
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// Handle logic when a worker has completed a task
-	if args.prevTaskCompleted {
+	if args.PrevTaskCompleted {
 		// Only add to intermediate files (for Map tasks) and increment
 		// completed task counter if task has not already been completed
 		// NOTE: Multiple workers can concurrently report that they have
@@ -268,13 +258,13 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// before continuing.
 	if err != nil {
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
-		c.workers[args.workerIndex].taskIndex = -1
+		c.workers[args.WorkerIndex].taskIndex = -1
 		// To synchronize stage completion while still allowing waiting threads
 		// to take requeued tasks, we spin on c.taskAssigner.pop() with a
 		// random wait between attempts.
 		currentStage := c.checkStage()
 		if currentStage == "finished" {
-			reply = &TaskInfo{stage: "finished"}
+			reply = &TaskInfo{Stage: "finished"}
 			return nil
 		}
 		for currentStage == c.checkStage() {
@@ -288,11 +278,11 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		}
 	}
 	if c.checkStage() == "finished" {
-		reply = &TaskInfo{stage: "finished"}
+		reply = &TaskInfo{Stage: "finished"}
 		return nil
 	}
 	// Update worker status (in workers []workerInfo) with newly assigned task
-	c.workers[args.workerIndex].taskIndex = reply.taskIndex
+	c.workers[args.WorkerIndex].taskIndex = reply.TaskIndex
 	return nil
 }
 
@@ -363,9 +353,9 @@ func (c *Coordinator) setupReduce() {
 	for i, fnames := range c.intermediateFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
-			taskIndex:     i,
-			filesLocation: fnames,
-			stage:         "reduce",
+			TaskIndex:     i,
+			FilesLocation: fnames,
+			Stage:         "reduce",
 		}
 		c.taskAssigner.stack = append(c.taskAssigner.stack, ti)
 	}

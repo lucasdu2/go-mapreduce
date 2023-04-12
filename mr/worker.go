@@ -1,4 +1,4 @@
-package mapreduce
+package mr
 
 import (
 	"bufio"
@@ -10,17 +10,6 @@ import (
 	"strconv"
 	"strings"
 )
-
-// TODO: Generally, figure out if we need to capitalize any of these struct
-// fields for exporting.
-type TaskRequest struct {
-	workerIndex       int       // Index of worker
-	prevTaskIndex     int       // Index of previous task
-	prevTaskStage     string    // Stage that previous task belonged to
-	prevTaskCompleted bool      // Indicate if previously assigned task completed
-	outputFiles       []string  // Return completed task output files
-	prevTaskInfo      *TaskInfo // Previous TaskInfo struct
-}
 
 type Worker struct {
 	workerIndex int // Identifying index of worker
@@ -35,7 +24,7 @@ type Worker struct {
 // are in a particular partition. Then it actually writes the data to intermediate
 // files and returns a slice of strings containing the names of the intermediate
 // files.
-func (w *Worker) writeIntermediateFiles(taskIndex int,
+func (w *Worker) writeIntermediateFiles(TaskIndex int,
 	partitionToKVs map[int][]string) ([]string, error) {
 	var outFiles []string
 	var sb strings.Builder
@@ -50,7 +39,7 @@ func (w *Worker) writeIntermediateFiles(taskIndex int,
 		sb.WriteString("worker")
 		sb.WriteString(strconv.Itoa(w.workerIndex))
 		sb.WriteString("-")
-		sb.WriteString(strconv.Itoa(taskIndex))
+		sb.WriteString(strconv.Itoa(TaskIndex))
 		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(partitionIndex))
 		filenamePrefix := sb.String()
@@ -85,7 +74,7 @@ func (w *Worker) writeIntermediateFiles(taskIndex int,
 // application-specified Map function on the data. It writes the results to
 // a set of intermediate files, then returns that set of intermediate files in
 // a slice of strings.
-func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
+func (w *Worker) runMap(fname string, TaskIndex int) ([]string, error) {
 	// Create outFiles string slice
 	var outFiles []string
 	// Read data from file
@@ -134,7 +123,7 @@ func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
 		}
 	}
 	// Write resulting data to intermediate files
-	outFiles, err = w.writeIntermediateFiles(taskIndex, partitionToKVs)
+	outFiles, err = w.writeIntermediateFiles(TaskIndex, partitionToKVs)
 	if err != nil {
 		return nil, err
 	}
@@ -164,7 +153,7 @@ func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 	return nil
 }
 
-func (w *Worker) runReduce(fnames []string, taskIndex int) error {
+func (w *Worker) runReduce(fnames []string, TaskIndex int) error {
 	// Read data from each file and sort by intermediate keys
 	// Create map from each key to collected set of values across all input files
 	collectedKVs := make(map[string][]string)
@@ -188,7 +177,7 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	var sb strings.Builder
 	sb.Reset()
 	sb.WriteString("out-")
-	sb.WriteString(strconv.Itoa(taskIndex))
+	sb.WriteString(strconv.Itoa(TaskIndex))
 	sb.WriteString("-worker")
 	sb.WriteString(strconv.Itoa(w.workerIndex))
 	filenamePrefix := sb.String()
@@ -213,7 +202,7 @@ func (w *Worker) runReduce(fnames []string, taskIndex int) error {
 	// Attempt atomic rename to final output file name
 	sb.Reset()
 	sb.WriteString("workbench/mr-out-")
-	sb.WriteString(strconv.Itoa(taskIndex))
+	sb.WriteString(strconv.Itoa(TaskIndex))
 	filenameFinal := sb.String()
 	// NOTE: os.Rename is guaranteed to be atomic only on Unix systems.
 	// Additionally, it appears to be best practice to only rename within a
@@ -237,13 +226,9 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 		partFunc:    partFunc.(func(string, int) int),
 	}
 	// TODO: Run heartbeat in the background as a goroutine
-	// TODO: Start main loop--send RPC asking for task to server, wait for response,
-	// run task, repeat. If server does not respond for a certain amount of time
-	// assume it is dead/operation is over and shut down. This should prevent an
-	// infinite loop if the coordinator dies.
 	// Set up request args and reply variables
 	args := &TaskRequest{
-		workerIndex: w.workerIndex,
+		WorkerIndex: w.workerIndex,
 	}
 	var reply *TaskInfo
 	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
@@ -257,32 +242,32 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 			log.Println("assuming coordinator has exited, exiting worker")
 			break
 		}
-		if reply.stage == "finished" {
+		if reply.Stage == "finished" {
 			log.Printf("MapReduce operation finished, exiting worker")
 			break
 		}
-		if reply.stage == "map" {
-			intFiles, err := w.runMap(reply.filesLocation[0], reply.taskIndex)
-			args.prevTaskIndex = reply.taskIndex
-			args.prevTaskStage = reply.stage
+		if reply.Stage == "map" {
+			intFiles, err := w.runMap(reply.FilesLocation[0], reply.TaskIndex)
+			args.PrevTaskIndex = reply.TaskIndex
+			args.PrevTaskStage = reply.Stage
 			if err == nil {
-				args.prevTaskCompleted = true
-				args.outputFiles = intFiles
+				args.PrevTaskCompleted = true
+				args.OutputFiles = intFiles
 			} else {
-				args.prevTaskCompleted = false
-				args.prevTaskInfo = reply
+				args.PrevTaskCompleted = false
+				args.PrevTaskInfo = reply
 			}
 			continue
 		}
-		if reply.stage == "reduce" {
-			err := w.runReduce(reply.filesLocation, reply.taskIndex)
-			args.prevTaskIndex = reply.taskIndex
-			args.prevTaskStage = reply.stage
+		if reply.Stage == "reduce" {
+			err := w.runReduce(reply.FilesLocation, reply.TaskIndex)
+			args.PrevTaskIndex = reply.TaskIndex
+			args.PrevTaskStage = reply.Stage
 			if err == nil {
-				args.prevTaskCompleted = true
+				args.PrevTaskCompleted = true
 			} else {
-				args.prevTaskCompleted = false
-				args.prevTaskInfo = reply
+				args.PrevTaskCompleted = false
+				args.PrevTaskInfo = reply
 			}
 		}
 	}

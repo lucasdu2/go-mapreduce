@@ -34,14 +34,14 @@ func Map(data string, storedict map[string][]string) error {
 			// NOTE: We are pre-emptively doing some reducing (see note above),
 			// so instead of appending to the slice as we normally would, we
 			// simply increment the existing counter.
-			valInt, err := strconv.Atoi(val)
+			valInt, err := strconv.Atoi(val[0])
 			if err != nil {
 				return err
 			}
 			storedict[w][0] = string(valInt + 1)
 		} else {
 			// If no values yet for a key, initialize a string slice for it
-			(*storedict)[w] = []string{"1"}
+			storedict[w] = []string{"1"}
 		}
 	}
 	return nil
