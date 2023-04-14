@@ -3,6 +3,7 @@ package mr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -28,11 +29,12 @@ type taskStack struct {
 	stack []*TaskInfo
 }
 
-// newMapTaskStack constructs a
+// newMapTaskStack constructs a new taskStack from a list of Map task files
 func newMapTaskStack(taskFiles []string) *taskStack {
 	// Create taskStack struct and populate
 	ts := &taskStack{sync.Mutex{}, make([]*TaskInfo, 0)}
 	for i, fname := range taskFiles {
+		fmt.Println(i)
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
 			TaskIndex:     i,
@@ -45,6 +47,7 @@ func newMapTaskStack(taskFiles []string) *taskStack {
 	return ts
 }
 
+// newReduceTaskStack constructs a new taskStack from a list of Map task files
 func newReduceTaskStack(taskFiles [][]string) *taskStack {
 	// Create taskStack struct and populate
 	ts := &taskStack{sync.Mutex{}, make([]*TaskInfo, 0)}
@@ -93,17 +96,17 @@ type Coordinator struct {
 	m                 int          // Number of Map tasks
 	r                 int          // Number of Reduce tasks
 	workers           []workerInfo // Tracks worker health, assigned task
-	taskCompLock      *sync.Mutex  // Lock to protect access to taskCompletion
+	taskCompLock      sync.Mutex   // Lock to protect access to taskCompletion
 	taskCompletion    map[int]bool // Tracks task status (completed or not)
 	taskAssigner      *taskStack   // Tracks idle tasks (to be assigned)
-	intFilesLock      *sync.Mutex  // Lock to protect intermediateFiles
+	intFilesLock      sync.Mutex   // Lock to protect intermediateFiles
 	intermediateFiles [][]string   // Locations of intermediate files
 
 	// Fields for stage transition coordination
-	total     int         // Total tasks in a stage
-	stageLock *sync.Mutex // Lock to protect counter and stage string
-	count     int         // Counter of completed tasks
-	stage     string      // Current stage (Map, Reduce, or Finished)
+	total     int        // Total tasks in a stage
+	stageLock sync.Mutex // Lock to protect counter and stage string
+	count     int        // Counter of completed tasks
+	stage     string     // Current stage (Map, Reduce, or Finished)
 
 	// Channel to communicate termination
 	killChan chan int
@@ -129,7 +132,7 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	}
 	coordinator.taskCompletion = taskCompletion
 	// Construct taskAssigner taskStack (initialize for Map stage)
-	taskFiles := make([]string, m)
+	var taskFiles []string
 	for i := 0; i < m; i++ {
 		// NOTE: The coordinator code here expects Map task files to be of the
 		// form pg-{index}.txt. The application-defined InputSplitter must
@@ -212,11 +215,21 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 }
 
 func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
+	// If there was no previous task, this is the initial TaskRequest from a
+	// worker. There was no real task failure, and we should simply skip this
+	// function and go directly to task assignment from taskAssigner.
+	if args.PrevTaskInfo == nil {
+		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
+		return
+	}
 	c.taskCompLock.Lock()
 	defer c.taskCompLock.Unlock()
 
+	log.Printf("Worker %v failed to complete Task %v from Stage %v",
+		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
 	// If the failed task is for a previous stage, do nothing
 	if args.PrevTaskStage != c.checkStage() {
+		log.Printf("Failed task from previous stage, ignoring")
 		return
 	}
 
@@ -229,6 +242,7 @@ func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
 
 }
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
+	log.Printf("Assigning task to Worker %v\n", args.WorkerIndex)
 	// Handle logic when a worker has completed a task
 	if args.PrevTaskCompleted {
 		// Only add to intermediate files (for Map tasks) and increment
@@ -253,10 +267,15 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// Assign new task to worker, if possible
 	var err error
 	reply, err = c.taskAssigner.pop()
+	log.Printf("Assigned Task %v from Stage %v to Worker %v\n", reply.TaskIndex,
+		reply.Stage, args.WorkerIndex)
+	fmt.Println(reply)
+
 	// pop() will only return an non-nil error is there are no more tasks to
 	// assign. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
 	if err != nil {
+		log.Print("No more tasks in task queue, waiting...")
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
 		c.workers[args.WorkerIndex].taskIndex = -1
 		// To synchronize stage completion while still allowing waiting threads
