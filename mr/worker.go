@@ -74,7 +74,8 @@ func (w *Worker) writeIntermediateFiles(TaskIndex int,
 // application-specified Map function on the data. It writes the results to
 // a set of intermediate files, then returns that set of intermediate files in
 // a slice of strings.
-func (w *Worker) runMap(fname string, TaskIndex int) ([]string, error) {
+func (w *Worker) runMap(fname string, taskIndex int) ([]string, error) {
+	log.Printf("Worker %v starting Map Task %v", w.workerIndex, taskIndex)
 	// Create outFiles string slice
 	var outFiles []string
 	// Read data from file
@@ -123,7 +124,7 @@ func (w *Worker) runMap(fname string, TaskIndex int) ([]string, error) {
 		}
 	}
 	// Write resulting data to intermediate files
-	outFiles, err = w.writeIntermediateFiles(TaskIndex, partitionToKVs)
+	outFiles, err = w.writeIntermediateFiles(taskIndex, partitionToKVs)
 	if err != nil {
 		return nil, err
 	}
@@ -230,43 +231,38 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 	args := &TaskRequest{
 		WorkerIndex: w.workerIndex,
 	}
-	var reply *TaskInfo
+	reply := &TaskInfo{}
 	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
 	for true {
+		log.Println(args)
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
-			log.Panicf("error assigning task: %v\n", err)
+			log.Panicf("Error assigning task: %v\n", err)
 		}
+		log.Println(reply)
 		if reply.Stage == "finished" {
 			log.Printf("MapReduce operation finished, exiting worker")
 			break
 		}
 		if reply.Stage == "map" {
 			intFiles, err := w.runMap(reply.FilesLocation[0], reply.TaskIndex)
-			args.PrevTaskIndex = reply.TaskIndex
-			args.PrevTaskStage = reply.Stage
-			if err == nil {
-				args.PrevTaskCompleted = true
-				args.OutputFiles = intFiles
-			} else {
-				args.PrevTaskCompleted = false
-				args.PrevTaskInfo = reply
+			if err != nil {
+				log.Panicf("Error completing Map Task %v (Worker %v): %v\n",
+					reply.TaskIndex, w.workerIndex, err)
 			}
-			continue
+			args.OutputFiles = intFiles
 		}
 		if reply.Stage == "reduce" {
 			err := w.runReduce(reply.FilesLocation, reply.TaskIndex)
-			args.PrevTaskIndex = reply.TaskIndex
-			args.PrevTaskStage = reply.Stage
-			if err == nil {
-				args.PrevTaskCompleted = true
-			} else {
-				args.PrevTaskCompleted = false
-				args.PrevTaskInfo = reply
+			if err != nil {
+				log.Panicf("Error completing Reduce Task %v (Worker %v): %v\n",
+					reply.TaskIndex, w.workerIndex, err)
 			}
 		}
+		args.PrevTaskIndex = reply.TaskIndex
+		args.PrevTaskStage = reply.Stage
 	}
 }

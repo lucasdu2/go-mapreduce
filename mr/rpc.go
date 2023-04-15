@@ -1,12 +1,10 @@
 package mr
 
 type TaskRequest struct {
-	WorkerIndex       int       // Index of worker
-	PrevTaskIndex     int       // Index of previous task
-	PrevTaskStage     string    // Stage that previous task belonged to
-	PrevTaskCompleted bool      // Indicate if previously assigned task completed
-	OutputFiles       []string  // Return completed task output files
-	PrevTaskInfo      *TaskInfo // Previous TaskInfo struct
+	WorkerIndex   int      // Index of worker
+	PrevTaskIndex int      // Index of previous task
+	PrevTaskStage string   // Stage that previous task belonged to
+	OutputFiles   []string // Return completed task output files
 }
 
 // TaskInfo defines a struct to pass information about a Map or Reduce task to

@@ -48,6 +48,12 @@ func main() {
 	err = splitter.(func(string, int) error)(*inputFile, *m)
 	errCheck(err)
 
+	// Create "workbench" directory for holding intermediate files
+	err = os.Mkdir("workbench", 0755)
+	errCheck(err)
+	// TODO: Uncomment this later, commented out for testing
+	// defer os.RemoveAll("workbench")
+
 	// Spawn coordinator and worker programs
 	// NOTE: Because we do not have access to an actual cluster of servers, we
 	// will simply be starting the coordinator and workers on a single local

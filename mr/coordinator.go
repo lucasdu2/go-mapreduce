@@ -3,7 +3,6 @@ package mr
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -34,7 +33,6 @@ func newMapTaskStack(taskFiles []string) *taskStack {
 	// Create taskStack struct and populate
 	ts := &taskStack{sync.Mutex{}, make([]*TaskInfo, 0)}
 	for i, fname := range taskFiles {
-		fmt.Println(i)
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
 			TaskIndex:     i,
@@ -193,13 +191,31 @@ func (c *Coordinator) checkStage() string {
 }
 
 func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
-	c.taskCompLock.Lock()
-	defer c.taskCompLock.Unlock()
+	// If there was no previous task stage, this is the initial TaskRequest from
+	// a worker and we should go straight to task assignment
+	if args.PrevTaskStage == "" {
+		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
+		return
+	}
 
 	// If the completed task is for a previous stage, reject the completion
 	if args.PrevTaskStage != c.checkStage() {
+		log.Println(args.PrevTaskStage)
+		log.Println(c.checkStage())
+		log.Printf("Completed task from previous stage, ignoring")
 		return
 	}
+	log.Printf("Worker %v has completed Task %v from Stage %v",
+		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
+
+	// NOTE: We need to acquire a lock when checking completion status in
+	// taskCompletion. Multiple workers can concurrently report that they have
+	// completed the same task, so there can be concurrent executions of
+	// handleTaskCompletion. We must avoid the situation where multiple workers
+	// see the task in not yet completed and enter the completion flow, since
+	// this would result in double counting of a task in the task counter.
+	c.taskCompLock.Lock()
+	defer c.taskCompLock.Unlock()
 
 	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.PrevTaskIndex] {
@@ -211,66 +227,43 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 		// Increment completed tasks counter
 		c.countInc()
 	}
-
 }
 
-func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
-	// If there was no previous task, this is the initial TaskRequest from a
-	// worker. There was no real task failure, and we should simply skip this
-	// function and go directly to task assignment from taskAssigner.
-	if args.PrevTaskInfo == nil {
-		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
-		return
-	}
-	c.taskCompLock.Lock()
-	defer c.taskCompLock.Unlock()
+// TODO: Should use this code as basis for code to handle a worker failure.
+//func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
+//	// If there was no previous task, this is the initial TaskRequest from a
+//	// worker. There was no real task failure, and we should simply skip this
+//	// function and go directly to task assignment from taskAssigner.
+//	if args.PrevTaskInfo == nil {
+//		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
+//		return
+//	}
+//	if args.PrevTaskStage != c.checkStage() {
+//		log.Printf("Failed task from previous stage, ignoring")
+//		return
+//	}
+//	log.Printf("Worker %v failed to complete Task %v from Stage %v",
+//		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
+//	// If the failed task is for a previous stage, do nothing
+//
+//	c.taskCompLock.Lock()
+//	defer c.taskCompLock.Unlock()
+//
+//	// If task is not already completed by another worker, requeue the task
+//	if !c.taskCompletion[args.PrevTaskIndex] {
+//		// If the previous task failed, the prevTaskInfo filed of TaskRequest
+//		// should be filled out with the previous TaskInfo struct
+//		c.taskAssigner.push(args.PrevTaskInfo)
+//	}
+//}
 
-	log.Printf("Worker %v failed to complete Task %v from Stage %v",
-		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
-	// If the failed task is for a previous stage, do nothing
-	if args.PrevTaskStage != c.checkStage() {
-		log.Printf("Failed task from previous stage, ignoring")
-		return
-	}
-
-	// If task is not already completed by another worker, requeue the task
-	if !c.taskCompletion[args.PrevTaskIndex] {
-		// If the previous task failed, the prevTaskInfo filed of TaskRequest
-		// should be filled out with the previous TaskInfo struct
-		c.taskAssigner.push(args.PrevTaskInfo)
-	}
-
-}
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	log.Printf("Assigning task to Worker %v\n", args.WorkerIndex)
 	// Handle logic when a worker has completed a task
-	if args.PrevTaskCompleted {
-		// Only add to intermediate files (for Map tasks) and increment
-		// completed task counter if task has not already been completed
-		// NOTE: Multiple workers can concurrently report that they have
-		// completed the same task, so there can be concurrent executions of
-		// this section of code. In particular, there can be concurrent access
-		// to taskCompletion, where multiple workers may see that the task has
-		// not yet been completed and enter the if statement.
-		// Within the if statement, addToIntermediateFiles already synchronizes
-		// writes to intermediateFiles, and setting task status to completed
-		// is an idempotent action. However, we run the risk of incrementing the
-		// completed tasks counter multiple times if multiple workers complete
-		// the same task and enter this section concurrently. This behavior is
-		// incorrect and so we must still synchronize this entire section of
-		// code with a lock.
-		c.handleTaskCompletion(args)
-	} else {
-		// Handle logic when a worker was not able to complete a task
-		c.handleTaskFailure(args)
-	}
+	c.handleTaskCompletion(args)
 	// Assign new task to worker, if possible
 	var err error
-	reply, err = c.taskAssigner.pop()
-	log.Printf("Assigned Task %v from Stage %v to Worker %v\n", reply.TaskIndex,
-		reply.Stage, args.WorkerIndex)
-	fmt.Println(reply)
-
+	nextTask, err := c.taskAssigner.pop()
 	// pop() will only return an non-nil error is there are no more tasks to
 	// assign. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
@@ -297,9 +290,16 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		}
 	}
 	if c.checkStage() == "finished" {
-		reply = &TaskInfo{Stage: "finished"}
+		reply.Stage = "finished"
 		return nil
 	}
+	// Deep copy nextTask into reply struct
+	reply.TaskIndex = nextTask.TaskIndex
+	reply.FilesLocation = nextTask.FilesLocation
+	reply.Stage = nextTask.Stage
+	log.Println(reply)
+	log.Printf("Assigned Task %v from Stage %v to Worker %v\n", reply.TaskIndex,
+		reply.Stage, args.WorkerIndex)
 	// Update worker status (in workers []workerInfo) with newly assigned task
 	c.workers[args.WorkerIndex].taskIndex = reply.TaskIndex
 	return nil
