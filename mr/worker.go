@@ -237,12 +237,10 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 		log.Fatal("dialing:", err)
 	}
 	for true {
-		log.Println(args)
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
 			log.Panicf("Error assigning task: %v\n", err)
 		}
-		log.Println(reply)
 		if reply.Stage == "finished" {
 			log.Printf("MapReduce operation finished, exiting worker")
 			break

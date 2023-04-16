@@ -38,7 +38,7 @@ func Map(data string, storedict map[string][]string) error {
 			if err != nil {
 				return err
 			}
-			storedict[w][0] = string(valInt + 1)
+			storedict[w][0] = strconv.Itoa(valInt + 1)
 		} else {
 			// If no values yet for a key, initialize a string slice for it
 			storedict[w] = []string{"1"}

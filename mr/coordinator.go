@@ -3,6 +3,7 @@ package mr
 import (
 	"context"
 	"errors"
+	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -161,11 +162,6 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 }
 
 func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
-	// Acquire lock before updating intermediateFiles slice
-	// See NOTE in Coordinator struct for reasoning
-	c.intFilesLock.Lock()
-	defer c.intFilesLock.Unlock()
-
 	// NOTE: All intermediate files will be of the form workerN-X-Y, where X is
 	// the index of the Map task, Y is the index of a Reduce task, and N is the
 	// index of the worker that produced the file. Additionally, we expect all
@@ -179,9 +175,6 @@ func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 		// noted above
 		splitOnDash := strings.Split(filename, "-")
 		index, err := strconv.Atoi(splitOnDash[len(splitOnDash)-1])
-		log.Println(index)
-		for true {
-		}
 		if err != nil {
 			log.Panic("Unable to get Reduce partition index from file name")
 		}
@@ -224,12 +217,14 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 
 	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.PrevTaskIndex] {
-		if c.stage == "map" {
+		log.Printf("Handling task completion")
+		if c.checkStage() == "map" {
 			c.addToIntermediateFiles(args.OutputFiles)
 		}
 		// Set task status to completed
 		c.taskCompletion[args.PrevTaskIndex] = true
 		// Increment completed tasks counter
+		log.Printf("Incrementing task counter")
 		c.countInc()
 	}
 }
@@ -263,12 +258,13 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 //}
 
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
-	log.Printf("Assigning task to Worker %v\n", args.WorkerIndex)
+	log.Printf("Handling AssignTask request from Worker %v\n", args.WorkerIndex)
 	// Handle logic when a worker has completed a task
 	c.handleTaskCompletion(args)
 	// Assign new task to worker, if possible
 	var err error
 	nextTask, err := c.taskAssigner.pop()
+	log.Printf("Getting next task from task assignment queue")
 	// pop() will only return an non-nil error is there are no more tasks to
 	// assign. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
@@ -302,7 +298,6 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	reply.TaskIndex = nextTask.TaskIndex
 	reply.FilesLocation = nextTask.FilesLocation
 	reply.Stage = nextTask.Stage
-	log.Println(reply)
 	log.Printf("Assigned Task %v from Stage %v to Worker %v\n", reply.TaskIndex,
 		reply.Stage, args.WorkerIndex)
 	// Update worker status (in workers []workerInfo) with newly assigned task
@@ -333,8 +328,10 @@ func (c *Coordinator) countInc() {
 	c.stageLock.Lock()
 	defer c.stageLock.Unlock()
 	c.count++
+	fmt.Println(c.count)
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
+		log.Printf("Stage is over, reached expected number of tasks: %v", c.total)
 		// Set up for Reduce stage or end MapReduce operation
 		if c.stage == "map" {
 			c.stage = "reduce"
