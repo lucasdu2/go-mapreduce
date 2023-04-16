@@ -42,10 +42,10 @@ func (w *Worker) writeIntermediateFiles(TaskIndex int,
 		sb.WriteString(strconv.Itoa(TaskIndex))
 		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(partitionIndex))
-		filenamePrefix := sb.String()
+		filename := sb.String()
 		// Add all key, value pairs to appropriate intermediate file
-		// NOTE: We will call the temp file directory "workbench"
-		fp, err := os.CreateTemp("workbench", filenamePrefix)
+		// NOTE: We will call the intermediate file directory "workbench"
+		fp, err := os.Create("workbench/" + filename)
 		if err != nil {
 			return nil, err
 		}

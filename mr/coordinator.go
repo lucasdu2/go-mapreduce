@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"net/rpc"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -159,7 +160,7 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	return coordinator, nil
 }
 
-func (c *Coordinator) addToIntermediateFiles(OutputFiles []string) {
+func (c *Coordinator) addToIntermediateFiles(outputFiles []string) {
 	// Acquire lock before updating intermediateFiles slice
 	// See NOTE in Coordinator struct for reasoning
 	c.intFilesLock.Lock()
@@ -173,10 +174,14 @@ func (c *Coordinator) addToIntermediateFiles(OutputFiles []string) {
 	// This will be the format that the workers must adhere to when creating
 	// intermediate files and is the format assumed here.
 
-	for _, filename := range OutputFiles {
-		// Get Reduce partition index fron file name, given the name format
+	for _, filename := range outputFiles {
+		// Get Reduce partition index from file name, given the name format
 		// noted above
-		index, err := strconv.Atoi(filename[len(filename)-1:])
+		splitOnDash := strings.Split(filename, "-")
+		index, err := strconv.Atoi(splitOnDash[len(splitOnDash)-1])
+		log.Println(index)
+		for true {
+		}
 		if err != nil {
 			log.Panic("Unable to get Reduce partition index from file name")
 		}
