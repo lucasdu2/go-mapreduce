@@ -211,7 +211,6 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	// this would result in double counting of a task in the task counter.
 	c.taskCompLock.Lock()
 	defer c.taskCompLock.Unlock()
-
 	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.PrevTaskIndex] {
 		log.Printf("Handling task completion")

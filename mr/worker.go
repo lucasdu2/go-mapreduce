@@ -231,12 +231,12 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 	args := &TaskRequest{
 		WorkerIndex: w.workerIndex,
 	}
-	reply := &TaskInfo{}
 	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
 	if err != nil {
 		log.Fatal("dialing:", err)
 	}
 	for true {
+		reply := &TaskInfo{}
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
 			log.Panicf("Error assigning task: %v\n", err)
