@@ -140,15 +140,12 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 		taskFiles = append(taskFiles, "pg-"+strconv.Itoa(i)+".txt")
 	}
 	coordinator.taskAssigner = newMapTaskStack(taskFiles)
-	// NOTE: For intermediateFiles, we pre-allocate an r x m array. This allows
-	// one index for every Reduce task, where each index stores the m Map outputs
+	// NOTE: For intermediateFiles, we pre-allocate an size r array. This allows
+	// one index for every Reduce task, where each index stores the Map outputs
 	// corresponding to that Reduce task. This automatically sorts intermediate
 	// files by Reduce task and makes it easier to construct a taskStack for
 	// the Reduce stage.
 	coordinator.intermediateFiles = make([][]string, r)
-	for i := 0; i < r; i++ {
-		coordinator.intermediateFiles[i] = make([]string, m)
-	}
 
 	// Initialize total for map stage
 	coordinator.total = m
@@ -226,6 +223,8 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 		// Increment completed tasks counter
 		log.Printf("Incrementing task counter")
 		c.countInc()
+	} else {
+		log.Printf("Task already completed")
 	}
 }
 
