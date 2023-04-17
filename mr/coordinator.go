@@ -3,7 +3,6 @@ package mr
 import (
 	"context"
 	"errors"
-	"fmt"
 	"log"
 	"math/rand"
 	"net"
@@ -326,7 +325,6 @@ func (c *Coordinator) countInc() {
 	c.stageLock.Lock()
 	defer c.stageLock.Unlock()
 	c.count++
-	fmt.Println(c.count)
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
 		log.Printf("Stage is over, reached expected number of tasks: %v", c.total)
@@ -350,10 +348,6 @@ func (c *Coordinator) createReduceTaskCompletionMap() {
 	for i := 0; i < c.r; i++ {
 		taskCompletion[i] = false
 	}
-
-	c.taskCompLock.Lock()
-	defer c.taskCompLock.Unlock()
-
 	c.taskCompletion = taskCompletion
 
 }
@@ -367,8 +361,6 @@ func (c *Coordinator) setupReduce() {
 	c.createReduceTaskCompletionMap()
 
 	// Fill out taskAssigner taskStack (initialize for Map stage)
-	c.taskAssigner.mu.Lock()
-	defer c.taskAssigner.mu.Unlock()
 	for i, fnames := range c.intermediateFiles {
 		// Create TaskInfo struct for each task file
 		ti := &TaskInfo{
