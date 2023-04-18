@@ -278,7 +278,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			return nil
 		}
 		for currentStage == c.checkStage() {
-			reply, err = c.taskAssigner.pop()
+			nextTask, err = c.taskAssigner.pop()
 			// If stage is not over, but there are no outstanding tasks in the
 			// queue, we wait a random time and retry
 			if err != nil {
