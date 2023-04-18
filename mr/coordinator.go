@@ -292,6 +292,9 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		return nil
 	}
 	// Deep copy nextTask into reply struct
+	// TODO: There seems to be a rare race condition where we can possibly hit
+	// this code despite nextTask being nil from assignment above--need to
+	// figure out how this is possible and how to avoid it.
 	reply.TaskIndex = nextTask.TaskIndex
 	reply.FilesLocation = nextTask.FilesLocation
 	reply.Stage = nextTask.Stage
