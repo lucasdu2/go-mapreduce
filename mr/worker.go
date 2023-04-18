@@ -149,8 +149,6 @@ func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 		kvSplit := strings.Split(kv, ",")
 		key := kvSplit[0]
 		value := kvSplit[1]
-		log.Println("key=" + key)
-		log.Println("value=" + value)
 		sorted[key] = append(sorted[key], value)
 	}
 	return nil
