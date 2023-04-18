@@ -274,7 +274,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		// random wait between attempts.
 		currentStage := c.checkStage()
 		if currentStage == "finished" {
-			reply = &TaskInfo{Stage: "finished"}
+			reply.Stage = "finished"
 			return nil
 		}
 		for currentStage == c.checkStage() {

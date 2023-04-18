@@ -149,6 +149,8 @@ func (w *Worker) sortByKey(fname string, sorted map[string][]string) error {
 		kvSplit := strings.Split(kv, ",")
 		key := kvSplit[0]
 		value := kvSplit[1]
+		log.Println("key=" + key)
+		log.Println("value=" + value)
 		sorted[key] = append(sorted[key], value)
 	}
 	return nil
@@ -181,6 +183,7 @@ func (w *Worker) runReduce(fnames []string, TaskIndex int) error {
 	sb.WriteString(strconv.Itoa(TaskIndex))
 	sb.WriteString("-worker")
 	sb.WriteString(strconv.Itoa(w.workerIndex))
+	sb.WriteString("-*")
 	filenamePrefix := sb.String()
 	// Create temp file in workbench for output file
 	tempf, err := os.CreateTemp("workbench", filenamePrefix)

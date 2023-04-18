@@ -14,7 +14,7 @@ import (
 func Map(data string, storedict map[string][]string) error {
 	// Remove all punctuation from data and split by whitespace
 	removePunctuation := func(r rune) rune {
-		if strings.ContainsRune(".,:;", r) {
+		if strings.ContainsRune(".,:;(){}[]'`\"", r) {
 			return -1
 		} else {
 			return r
@@ -64,7 +64,7 @@ func Reduce(key string, values []string, fp *os.File) error {
 		sum += vInt
 	}
 	// Write output to output file
-	kvOutput := strings.Join([]string{key, string(sum)}, " ")
+	kvOutput := strings.Join([]string{key, strconv.Itoa(sum)}, " ")
 	_, err := fp.WriteString(kvOutput + "\n")
 	if err != nil {
 		return err
