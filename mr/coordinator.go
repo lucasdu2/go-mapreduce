@@ -291,14 +291,19 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 		reply.Stage = "finished"
 		return nil
 	}
+	// There should always be a new task popped from taskAssigner and assigned
+	// to nextTask at this point--if that has not yet happened, we do the
+	// assignment here
+	if nextTask == nil {
+		nextTask, err = c.taskAssigner.pop()
+		if err != nil {
+			// If taskAssigner is still empty, the MapReduce operation must be
+			// over and we should return accordingly
+			reply.Stage = "finished"
+			return nil
+		}
+	}
 	// Deep copy nextTask into reply struct
-	// TODO: There seems to be a rare race condition where we can possibly hit
-	// this code despite nextTask being nil from assignment above--need to
-	// figure out how this is possible and how to avoid it.
-	// Initial thoughts: Seems to be a result of the fact that it is possible
-	// to move on from the for loop spinning on taskAssigner.pop() due to a
-	// change in the stage before we actually get the next task from
-	// taskAssigner. This may be hard to fix, need to think about it...
 	reply.TaskIndex = nextTask.TaskIndex
 	reply.FilesLocation = nextTask.FilesLocation
 	reply.Stage = nextTask.Stage
