@@ -2,12 +2,14 @@ package main
 
 import (
 	"flag"
+	"io"
 	"log"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"plugin"
+	"strconv"
 
-	// TODO: Need to export the mapreduce package with this name
 	mr "github.com/lucasdu2/go-mapreduce/mr"
 )
 
@@ -16,6 +18,35 @@ func errCheck(e error) {
 		panic(e)
 		// log.Fatal(e)
 	}
+}
+
+// copyFile copies the contents of the file at srcpath to a regular file at
+// dstpath. If dstpath already exists and is not a directory, the function
+// truncates it. The function does not copy file modes or file attributes.
+func copyFile(srcpath, dstpath string) (err error) {
+	r, err := os.Open(srcpath)
+	if err != nil {
+		return err
+	}
+	defer r.Close() // ok to ignore error: file was opened read-only.
+
+	w, err := os.Create(dstpath)
+	if err != nil {
+		return err
+	}
+
+	defer func() {
+		e := w.Close()
+		// Report the error from Close, if any.
+		// But do so only if there isn't already
+		// an outgoing error.
+		if e != nil && err == nil {
+			err = e
+		}
+	}()
+
+	_, err = io.Copy(w, r)
+	return err
 }
 
 func main() {
@@ -30,6 +61,8 @@ func main() {
 	numWorkers := flag.Int("workers", 4, "number of workers to spawn")
 	m := flag.Int("m", 32, "number of Map tasks to create")
 	r := flag.Int("r", 8, "number of Reduce tasks to create")
+	cleanUpAfter := flag.Bool("clean", true,
+		"clean up intermediate files upon MapReduce completion")
 	flag.Parse()
 
 	// Load application-specific functions at runtime
@@ -51,8 +84,19 @@ func main() {
 	// Create "workbench" directory for holding intermediate files
 	err = os.Mkdir("workbench", 0755)
 	errCheck(err)
-	// TODO: Uncomment this later, commented out for testing
-	// defer os.RemoveAll("workbench")
+	if *cleanUpAfter {
+		// Remove workbench directory
+		defer os.RemoveAll("workbench")
+		// Remove all input files (of form pg-*)
+		defer func() {
+			inputFiles, err := filepath.Glob("pg-*")
+			errCheck(err)
+			for _, f := range inputFiles {
+				err = os.Remove(f)
+				errCheck(err)
+			}
+		}()
+	}
 
 	// Spawn coordinator and worker programs
 	// NOTE: Because we do not have access to an actual cluster of servers, we
@@ -72,7 +116,12 @@ func main() {
 		log.Println("Shutting down coordinator, exiting MapReduce operation")
 	}()
 	mr.CoordinatorRun(*m, *r, *numWorkers, killChan)
-	// Move all R Reduce outputs out from workbench directory
-	// Combine all R Reduce outputs into single output file
-
+	// Move all outputs from workbench directory into outputs directory
+	err = os.Mkdir("outputs", 0755)
+	errCheck(err)
+	for i := 0; i < *r; i++ {
+		outfile := "mr-out-" + strconv.Itoa(i)
+		err = copyFile("workbench/"+outfile, "outputs/"+outfile)
+		errCheck(err)
+	}
 }

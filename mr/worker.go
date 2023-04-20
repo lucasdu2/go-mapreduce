@@ -240,7 +240,7 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 		reply := &TaskInfo{}
 		err = client.Call("Coordinator.AssignTask", args, reply)
 		if err != nil {
-			log.Panicf("Error assigning task: %v\n", err)
+			log.Panicf("Error assigning task, assuming job is done: %v\n", err)
 		}
 		if reply.Stage == "finished" {
 			log.Printf("MapReduce operation finished, exiting worker")
