@@ -22,7 +22,6 @@ func Map(data string, storedict map[string][]string) error {
 	}
 	data = strings.Map(removePunctuation, data)
 	words := strings.Fields(data)
-	// fmt.Println(words)
 
 	// Store word, count pairs in dictionary
 	// NOTE: We perform a small optimization here by immediately summing the

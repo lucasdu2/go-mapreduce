@@ -24,7 +24,7 @@ type Worker struct {
 // are in a particular partition. Then it actually writes the data to intermediate
 // files and returns a slice of strings containing the names of the intermediate
 // files.
-func (w *Worker) writeIntermediateFiles(TaskIndex int,
+func (w *Worker) writeIntermediateFiles(taskIndex int,
 	partitionToKVs map[int][]string) ([]string, error) {
 	var outFiles []string
 	var sb strings.Builder
@@ -39,7 +39,7 @@ func (w *Worker) writeIntermediateFiles(TaskIndex int,
 		sb.WriteString("worker")
 		sb.WriteString(strconv.Itoa(w.workerIndex))
 		sb.WriteString("-")
-		sb.WriteString(strconv.Itoa(TaskIndex))
+		sb.WriteString(strconv.Itoa(taskIndex))
 		sb.WriteString("-")
 		sb.WriteString(strconv.Itoa(partitionIndex))
 		filename := sb.String()
