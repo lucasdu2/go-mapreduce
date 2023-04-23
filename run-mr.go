@@ -79,6 +79,26 @@ func main() {
 	partitioner, err := p.Lookup("Partitioner")
 	errCheck(err)
 
+	// Create termination channel
+	killChan := make(chan int, 1)
+	// Handle manual interrupt of MapReduce operation
+	signalChan := make(chan os.Signal, 1)
+	signal.Notify(signalChan, os.Interrupt)
+	go func() {
+		<-signalChan
+		killChan <- 1
+		log.Println("Shutting down coordinator, exiting MapReduce operation")
+	}()
+
+	// Handle sequential MapReduce
+	// ---------------------------
+	if *runSequential {
+		mr.SequentialRun(*inputFile, mapFunc, redFunc, killChan)
+		return
+	}
+
+	// Otherwise, execute regular parallel MapReduce
+	// ---------------------------------------------
 	// Split input using application-specified InputSplitter function
 	err = splitter.(func(string, int) error)(*inputFile, *m)
 	errCheck(err)
@@ -107,16 +127,6 @@ func main() {
 	for i := 0; i < *numWorkers; i++ {
 		go mr.WorkerRun(i, *r, mapFunc, redFunc, partitioner)
 	}
-	// Create termination channel
-	killChan := make(chan int, 1)
-	// Handle manual interrupt of MapReduce operation
-	signalChan := make(chan os.Signal, 1)
-	signal.Notify(signalChan, os.Interrupt)
-	go func() {
-		<-signalChan
-		killChan <- 1
-		log.Println("Shutting down coordinator, exiting MapReduce operation")
-	}()
 	mr.CoordinatorRun(*m, *r, *numWorkers, killChan)
 	// Move all outputs from workbench directory into outputs directory
 	err = os.Mkdir("outputs", 0755)

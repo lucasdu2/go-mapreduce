@@ -1,6 +1,7 @@
 package mr
 
 import (
+	"log"
 	"os"
 	"plugin"
 	"sort"
@@ -60,22 +61,27 @@ func runReduce(intermediateData map[string][]string,
 }
 
 func SequentialRun(
-	inputFiles []string,
+	inputFile string,
 	mapFunc, redFunc plugin.Symbol,
-	kc chan int,
+	killChan chan int,
 ) {
-	// TODO: Handle interrupts (probably use goroutine waiting on kc)
-	intermediateData := make(map[string][]string)
-	// Take in input files and run Map function on them sequentially
-	for _, fname := range inputFiles {
-		err := runMap(fname, intermediateData, mapFunc)
+	// Handle interrupts
+	go func() {
+		intermediateData := make(map[string][]string)
+		// Take in input file and run Map function on the data sequentially
+		log.Println("Starting sequential Map")
+		err := runMap(inputFile, intermediateData, mapFunc)
 		if err != nil {
-			panic(err)
+			log.Panic(err)
 		}
-	}
-	// Run Reduce function on each key sequentially and output results
-	err := runReduce(intermediateData, redFunc)
-	if err != nil {
-		panic(err)
-	}
+		// Run Reduce function on each key sequentially and output results
+		log.Println("Starting sequential Reduce")
+		err = runReduce(intermediateData, redFunc)
+		if err != nil {
+			log.Panic(err)
+		}
+		killChan <- 1
+	}()
+	<-killChan
+	log.Println("Exiting sequential MapReduce")
 }
