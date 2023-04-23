@@ -199,7 +199,10 @@ func (w *Worker) runReduce(fnames []string, TaskIndex int) error {
 	}
 	defer fp.Close()
 	for _, k := range sortedKeys {
-		w.redFunc(k, collectedKVs[k], fp)
+		err = w.redFunc(k, collectedKVs[k], fp)
+		if err != nil {
+			return err
+		}
 	}
 	// Attempt atomic rename to final output file name
 	sb.Reset()
