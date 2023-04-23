@@ -9,14 +9,14 @@ import (
 	"path/filepath"
 	"plugin"
 	"strconv"
+	"strings"
 
 	mr "github.com/lucasdu2/go-mapreduce/mr"
 )
 
 func errCheck(e error) {
 	if e != nil {
-		panic(e)
-		// log.Fatal(e)
+		log.Panic(e)
 	}
 }
 
@@ -130,7 +130,13 @@ func main() {
 	mr.CoordinatorRun(*m, *r, *numWorkers, killChan)
 	// Move all outputs from workbench directory into outputs directory
 	err = os.Mkdir("outputs", 0755)
-	errCheck(err)
+	if err != nil {
+		if strings.Contains(err.Error(), "file exists") {
+			log.Println("Output directory \"outputs\" already exists from " +
+				"previous run, please remove and try again")
+		}
+		log.Panic(err)
+	}
 	for i := 0; i < *r; i++ {
 		outfile := "mr-out-" + strconv.Itoa(i)
 		err = copyFile("workbench/"+outfile, "outputs/"+outfile)

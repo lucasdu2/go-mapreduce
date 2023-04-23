@@ -5,6 +5,7 @@ import (
 	"os"
 	"plugin"
 	"sort"
+	"strings"
 )
 
 func runMap(fname string, intermediateData map[string][]string,
@@ -34,6 +35,11 @@ func runReduce(intermediateData map[string][]string,
 	reducer := redFunc.(func(string, []string, *os.File) error)
 	err := os.Mkdir("outputs", 0755)
 	if err != nil {
+		if strings.Contains(err.Error(), "file exists") {
+			log.Println("Output directory \"outputs\" already exists from " +
+				"previous run, please remove and try again")
+			return nil
+		}
 		return err
 	}
 	outputName := "outputs/mr-out-0"
