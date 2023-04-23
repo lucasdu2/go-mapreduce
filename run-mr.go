@@ -105,7 +105,13 @@ func main() {
 
 	// Create "workbench" directory for holding intermediate files
 	err = os.Mkdir("workbench", 0755)
-	errCheck(err)
+	if err != nil {
+		if strings.Contains(err.Error(), "file exists") {
+			log.Println("Working directory \"workbench\" already exists from " +
+				"previous run, please remove and try again")
+		}
+		log.Panic(err)
+	}
 	if *cleanUpAfter {
 		// Remove workbench directory
 		defer os.RemoveAll("workbench")

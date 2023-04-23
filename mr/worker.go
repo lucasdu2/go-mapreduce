@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strconv"
 	"strings"
+	"time"
 )
 
 type Worker struct {
@@ -230,14 +231,29 @@ func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 		redFunc:     redFunc.(func(string, []string, *os.File) error),
 		partFunc:    partFunc.(func(string, int) int),
 	}
-	// TODO: Run heartbeat in the background as a goroutine
-	// Set up request args and reply variables
-	args := &TaskRequest{
-		WorkerIndex: w.workerIndex,
-	}
 	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
 	if err != nil {
 		log.Fatal("dialing:", err)
+	}
+	// Run heartbeat in the background as a goroutine
+	go func() {
+		for true {
+			// SLeep 100ms between heartbeats
+			sleepInterval, err := time.ParseDuration("100ms")
+			if err != nil {
+				log.Fatal(err)
+			}
+			time.Sleep(sleepInterval)
+			var hbReply bool
+			err = client.Call("Coordinator.WorkerHeartbeat", &index, &hbReply)
+			if err != nil {
+				log.Panicf("Error sending heartbeat: %v\n", err)
+			}
+		}
+	}()
+	// Set up request args and reply variables
+	args := &TaskRequest{
+		WorkerIndex: w.workerIndex,
 	}
 	for true {
 		reply := &TaskInfo{}

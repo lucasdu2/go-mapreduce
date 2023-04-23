@@ -19,8 +19,8 @@ import (
 // workerInfo tracks the health of a worker and what task, if any, it is
 // currently expected to be working on
 type workerInfo struct {
-	up        bool
-	taskIndex int
+	lastSeen     time.Time
+	assignedTask *TaskInfo
 }
 
 // taskStack implements a concurrent stack type to manage task assignments
@@ -119,8 +119,9 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	coordinator.r = r
 	// Construct workers slice
 	workers := make([]workerInfo, numWorkers)
+	timeNow := time.Now()
 	for i := 0; i < numWorkers; i++ {
-		newWorker := workerInfo{true, i}
+		newWorker := workerInfo{timeNow, nil}
 		workers = append(workers, newWorker)
 	}
 	coordinator.workers = workers
@@ -226,34 +227,6 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	}
 }
 
-// TODO: Should use this code as basis for code to handle a worker failure.
-//func (c *Coordinator) handleTaskFailure(args *TaskRequest) {
-//	// If there was no previous task, this is the initial TaskRequest from a
-//	// worker. There was no real task failure, and we should simply skip this
-//	// function and go directly to task assignment from taskAssigner.
-//	if args.PrevTaskInfo == nil {
-//		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
-//		return
-//	}
-//	if args.PrevTaskStage != c.checkStage() {
-//		log.Printf("Failed task from previous stage, ignoring")
-//		return
-//	}
-//	log.Printf("Worker %v failed to complete Task %v from Stage %v",
-//		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
-//	// If the failed task is for a previous stage, do nothing
-//
-//	c.taskCompLock.Lock()
-//	defer c.taskCompLock.Unlock()
-//
-//	// If task is not already completed by another worker, requeue the task
-//	if !c.taskCompletion[args.PrevTaskIndex] {
-//		// If the previous task failed, the prevTaskInfo filed of TaskRequest
-//		// should be filled out with the previous TaskInfo struct
-//		c.taskAssigner.push(args.PrevTaskInfo)
-//	}
-//}
-
 func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	log.Printf("Handling AssignTask request from Worker %v\n", args.WorkerIndex)
 	// Handle logic when a worker has completed a task
@@ -268,7 +241,7 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	if err != nil {
 		log.Print("No more tasks in task queue, waiting...")
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
-		c.workers[args.WorkerIndex].taskIndex = -1
+		c.workers[args.WorkerIndex].assignedTask = nil
 		// To synchronize stage completion while still allowing waiting threads
 		// to take requeued tasks, we spin on c.taskAssigner.pop() with a
 		// random wait between attempts.
@@ -310,23 +283,8 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	log.Printf("Assigned Task %v from Stage %v to Worker %v\n", reply.TaskIndex,
 		reply.Stage, args.WorkerIndex)
 	// Update worker status (in workers []workerInfo) with newly assigned task
-	c.workers[args.WorkerIndex].taskIndex = reply.TaskIndex
+	c.workers[args.WorkerIndex].assignedTask = nextTask
 	return nil
-}
-
-func (c *Coordinator) CheckWorker() {
-	// IDEA: Should add another field to workerInfo that tracks last seen
-	// timestamp. This field should be updated by this CheckWorker function.
-	// Then have some function that periodically checks this field and how much
-	// time has passed since the worker was last seen. If a certain amount of
-	// time has elapsed since the last seen time, we should set the worker to
-	// unhealthy and re-add its task the task queue.
-	// TODO: Is it possible for a task to be completed but still in the
-	// taskAssigner stack? For example, if we have 2 workers working on the
-	// same task, but one fails while the other succeeds. We need to work
-	// something into worker failed logic (in CheckWorker) that prevents
-	// an already completed task from being requeued.
-
 }
 
 // countInc implements an atomic increment for the coordinator's completed
@@ -384,6 +342,43 @@ func (c *Coordinator) setupReduce() {
 	}
 }
 
+func (c *Coordinator) WorkerHeartbeat(args *int, reply *bool) error {
+	// Update lastSeen field in workerInfo for worker sending heartbeat and
+	// send an acknowledgement back to worker
+	if args != nil {
+		c.workers[*args].lastSeen = time.Now()
+		*reply = true
+	}
+	return nil
+}
+
+func (c *Coordinator) monitorWorkerHealth(workerIndex int) {
+	// Continuously check if worker is still considered to be alive
+	for true {
+		// Sleep for 1 second between checks--workers should send a hearbeat
+		// every 100ms, so waiting for 1 second between checks should guarantee
+		// a change in lastSeen if worker is sending regular heartbeats
+		sleepInterval, err := time.ParseDuration("1s")
+		if err != nil {
+			log.Fatal(err)
+		}
+		time.Sleep(sleepInterval)
+
+		status := c.workers[workerIndex]
+		if !time.Now().After(status.lastSeen) {
+			// If worker considered dead, move current assigned task back into
+			// task queue if task is not already completed
+			c.taskCompLock.Lock()
+			defer c.taskCompLock.Unlock()
+
+			// If task is not already completed by another worker, requeue the task
+			if !c.taskCompletion[status.assignedTask.TaskIndex] {
+				c.taskAssigner.push(status.assignedTask)
+			}
+		}
+	}
+}
+
 // Run Coordinator execution flow
 func CoordinatorRun(m, r, numWorkers int, kc chan int) {
 	// Initialize Coordinator struct
@@ -398,12 +393,9 @@ func CoordinatorRun(m, r, numWorkers int, kc chan int) {
 	if err != nil {
 		log.Fatal("listen error: ", err)
 	}
-	// TODO: Figure out why we start a new server here, or if we need to use the
-	// already-started RPC server rpc.DefaultServer...
-	// ANSWER: Need to start a new HTTP server here, see this link (take notes
-	// on this later): medium.com/rungo/building-rpc-remote-procedure-call-
-	// network-in-go-5bfebe90f7e9. Basically, we need an RPC server (defined
-	// above) and an HTTP server to host the RPC server (defined below).
+	// NOTE: We need to start a new HTTP server here. Even though we have
+	// already set up an RPC server (defined above), we still need an HTTP
+	// server to host the RPC server.
 	srv := &http.Server{}
 	go func() {
 		err := srv.Serve(l)
@@ -412,6 +404,10 @@ func CoordinatorRun(m, r, numWorkers int, kc chan int) {
 		}
 		log.Println("Stopped serving new connections.")
 	}()
+	// Set up monitoring of worker heartbeats
+	for i := 0; i < numWorkers; i++ {
+		go c.monitorWorkerHealth(i)
+	}
 	// Block on killChan
 	<-c.killChan
 	// Shutdown server gracefully when termination message is received on
