@@ -1,13 +1,9 @@
 package mr
 
 import (
-	"context"
 	"errors"
 	"log"
 	"math/rand"
-	"net"
-	"net/http"
-	"net/rpc"
 	"strconv"
 	"strings"
 	"sync"
@@ -376,43 +372,5 @@ func (c *Coordinator) monitorWorkerHealth(workerIndex int) {
 				c.taskAssigner.push(status.assignedTask)
 			}
 		}
-	}
-}
-
-// Run Coordinator execution flow
-func CoordinatorRun(m, r, numWorkers int, kc chan int) {
-	// Initialize Coordinator struct
-	c, err := newCoordinator(m, r, numWorkers, kc)
-	if err != nil {
-		log.Fatal("error creating new coordinator: ", err)
-	}
-	// Start RPC server
-	rpc.Register(c)
-	rpc.HandleHTTP()
-	l, err := net.Listen("tcp", ":1234")
-	if err != nil {
-		log.Fatal("listen error: ", err)
-	}
-	// NOTE: We need to start a new HTTP server here. Even though we have
-	// already set up an RPC server (defined above), we still need an HTTP
-	// server to host the RPC server.
-	srv := &http.Server{}
-	go func() {
-		err := srv.Serve(l)
-		if err != http.ErrServerClosed {
-			log.Fatalf("HTTP server error: %v", err)
-		}
-		log.Println("Stopped serving new connections.")
-	}()
-	// Set up monitoring of worker heartbeats
-	for i := 0; i < numWorkers; i++ {
-		go c.monitorWorkerHealth(i)
-	}
-	// Block on killChan
-	<-c.killChan
-	// Shutdown server gracefully when termination message is received on
-	// killChan
-	if err := srv.Shutdown(context.Background()); err != nil {
-		log.Fatal("HTTP shutdown error: ", err)
 	}
 }

@@ -3,13 +3,10 @@ package mr
 import (
 	"bufio"
 	"log"
-	"net/rpc"
 	"os"
-	"plugin"
 	"sort"
 	"strconv"
 	"strings"
-	"time"
 )
 
 type Worker struct {
@@ -219,68 +216,4 @@ func (w *Worker) runReduce(fnames []string, TaskIndex int) error {
 		return err
 	}
 	return nil
-}
-
-// Run Worker execution flow
-func WorkerRun(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
-	// Initialize Worker struct
-	w := &Worker{
-		workerIndex: index,
-		r:           r,
-		mapFunc:     mapFunc.(func(string, map[string][]string) error),
-		redFunc:     redFunc.(func(string, []string, *os.File) error),
-		partFunc:    partFunc.(func(string, int) int),
-	}
-	client, err := rpc.DialHTTP("tcp", "localhost"+":1234")
-	if err != nil {
-		log.Fatal("dialing:", err)
-	}
-	// Run heartbeat in the background as a goroutine
-	go func() {
-		for true {
-			// SLeep 100ms between heartbeats
-			sleepInterval, err := time.ParseDuration("100ms")
-			if err != nil {
-				log.Fatal(err)
-			}
-			time.Sleep(sleepInterval)
-			var hbReply bool
-			err = client.Call("Coordinator.WorkerHeartbeat", &index, &hbReply)
-			if err != nil {
-				log.Panicf("Error sending heartbeat: %v\n", err)
-			}
-		}
-	}()
-	// Set up request args and reply variables
-	args := &TaskRequest{
-		WorkerIndex: w.workerIndex,
-	}
-	for true {
-		reply := &TaskInfo{}
-		err = client.Call("Coordinator.AssignTask", args, reply)
-		if err != nil {
-			log.Panicf("Error assigning task, assuming job is done: %v\n", err)
-		}
-		if reply.Stage == "finished" {
-			log.Printf("MapReduce operation finished, exiting worker")
-			break
-		}
-		if reply.Stage == "map" {
-			intFiles, err := w.runMap(reply.FilesLocation[0], reply.TaskIndex)
-			if err != nil {
-				log.Panicf("Error completing Map Task %v (Worker %v): %v\n",
-					reply.TaskIndex, w.workerIndex, err)
-			}
-			args.OutputFiles = intFiles
-		}
-		if reply.Stage == "reduce" {
-			err := w.runReduce(reply.FilesLocation, reply.TaskIndex)
-			if err != nil {
-				log.Panicf("Error completing Reduce Task %v (Worker %v): %v\n",
-					reply.TaskIndex, w.workerIndex, err)
-			}
-		}
-		args.PrevTaskIndex = reply.TaskIndex
-		args.PrevTaskStage = reply.Stage
-	}
 }

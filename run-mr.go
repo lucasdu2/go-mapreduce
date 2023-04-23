@@ -125,15 +125,9 @@ func main() {
 			}
 		}()
 	}
+	// Run regular parallel MapReduce
+	mr.RunMapReduce(*m, *r, *numWorkers, mapFunc, redFunc, partitioner, killChan)
 
-	// Spawn coordinator and worker programs
-	// NOTE: Because we do not have access to an actual cluster of servers, we
-	// will simply be starting the coordinator and workers on a single local
-	// machine as concurrent goroutines that communicate using RPCs.
-	for i := 0; i < *numWorkers; i++ {
-		go mr.WorkerRun(i, *r, mapFunc, redFunc, partitioner)
-	}
-	mr.CoordinatorRun(*m, *r, *numWorkers, killChan)
 	// Move all outputs from workbench directory into outputs directory
 	err = os.Mkdir("outputs", 0755)
 	if err != nil {
