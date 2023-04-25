@@ -18,7 +18,6 @@ The calling code should also be able to take the R output files (from the
 Reduce tasks) and produce a single, combined output file. 
 
 ### Additional Details
-**[10-31-22]**
 The application will need to define 4 plugin functions. It must define a Map and 
 Reduce function that will be called for Map and Reduce tasks, respectively. It 
 must also define an InputSplitter function (to specify how the application wants 
@@ -92,9 +91,12 @@ expected outputs.
 
 Note that this is a fairly minimal framework design; we do not plan to check 
 that the tasks are running in parallel, for example (although parallelism should 
-already be a given if we use goroutines), nor do we plan to check that 
+already be a given if we use goroutines), ~~nor do we plan to check that 
 extraneous tasks are not scheduled if there is no worker failure (as mentioned
-in the lab handout). The primary focus of this project should be on implementing
-MapReduce itself. The testing framework is additional work that needs to be done
-because it is not provided freely online, but does not need to be particularly 
-rigorous in our case. 
+in the lab handout)~~ [update 4.25.23: with proper logging, this may not
+actually be that hard to check]. The primary focus of this project should be on 
+implementing MapReduce itself. The testing framework is additional work that 
+needs to be done because it is not provided freely online, but does not need to 
+be particularly rigorous in our case. 
+
+For further details, [see full testing plan](testing-plan.md).

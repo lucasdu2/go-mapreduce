@@ -81,7 +81,7 @@ func runWorker(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 	// Run heartbeat in the background as a goroutine
 	go func() {
 		for true {
-			// SLeep 100ms between heartbeats
+			// Sleep 100ms between heartbeats
 			sleepInterval, err := time.ParseDuration("100ms")
 			if err != nil {
 				log.Fatal(err)
