@@ -166,7 +166,7 @@ func (w *Worker) runReduce(fnames []string, TaskIndex int) error {
 	// Sort keys to ensure ordering guarantees (see 4.2 of reference paper)
 	sortedKeys := make([]string, len(collectedKVs))
 	i := 0
-	for k, _ := range collectedKVs {
+	for k := range collectedKVs {
 		sortedKeys[i] = k
 		i++
 	}

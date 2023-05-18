@@ -75,28 +75,3 @@ Reduce task.
 
 ### Additional Details
 See the specific coordinator design document [here](worker-design.md).
-
-# Testing Plan
-You will need to write your own testing framework for this project, since the 
-course's testing framework is not provided. The framework should consist of a
-MapReduce application (along with a set of inputs and expected outputs) and a 
-way to inject crashes into the worker processes. Ideally, the framework should
-be able to automatically run these inputs and check if the output matches the
-expected output. The runtime should also be recorded for performance comparisons.
-
-The simplest test case may be a word count application. As noted above, you will 
-need to implement the Map and Reduce functions for this application. You will 
-also need to supply several (2 or 3) input files along with their corresponding 
-expected outputs. 
-
-Note that this is a fairly minimal framework design; we do not plan to check 
-that the tasks are running in parallel, for example (although parallelism should 
-already be a given if we use goroutines), ~~nor do we plan to check that 
-extraneous tasks are not scheduled if there is no worker failure (as mentioned
-in the lab handout)~~ [update 4.25.23: with proper logging, this may not
-actually be that hard to check]. The primary focus of this project should be on 
-implementing MapReduce itself. The testing framework is additional work that 
-needs to be done because it is not provided freely online, but does not need to 
-be particularly rigorous in our case. 
-
-For further details, [see full testing plan](testing-plan.md).

@@ -2,10 +2,7 @@
 ## Without Backup Tasks
 First, we set up the basic outline of the coordinator, without implementing
 Backup Tasks (as specified in 3.6 of the MapReduce paper). We can later extend
-this design to support Backup Tasks. 
-
-### Coordinator Data Structures
-TODO: summarize data structures inside the Coordinator struct, what each is for
+this design to support Backup Tasks (although I do not anticipate that we will). 
 
 ### Coordinating Stage Completion
 One major issue to be addressed is how to coordinate when a stage (either Map
@@ -69,4 +66,3 @@ have reason to issue overlapping calls to AssignTask. So a worker will only
 call AssignTask, and thus update its workers index, sequentially. Thus, there is
 actually no correctness problem due to concurrency in workers, since each thread 
 will only update its own piece of data in sequential order.
-

@@ -14,7 +14,9 @@ import (
 func RunMapReduce(
 	m, r, numWorkers int,
 	mapFunc, redFunc, partFunc plugin.Symbol,
-	kc chan int) {
+	crashCount int,
+	kc chan int,
+) {
 
 	// Spawn Coordinator and Worker programs
 	// NOTE: Because we do not have access to an actual cluster of servers, we
@@ -48,7 +50,12 @@ func RunMapReduce(
 
 	// Then start all Workers in goroutines
 	for i := 0; i < numWorkers; i++ {
-		go runWorker(i, r, mapFunc, redFunc, partFunc)
+		// Crash the first n workers, where n=crashCount
+		if i < crashCount {
+			go runWorker(i, r, mapFunc, redFunc, partFunc, true)
+		} else {
+			go runWorker(i, r, mapFunc, redFunc, partFunc, false)
+		}
 	}
 
 	// Start monitoring of Worker heartbeats in Coordinator
@@ -65,7 +72,11 @@ func RunMapReduce(
 }
 
 // Run Worker execution flow
-func runWorker(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
+func runWorker(
+	index, r int,
+	mapFunc, redFunc, partFunc plugin.Symbol,
+	shouldCrash bool,
+) {
 	// Initialize Worker struct
 	w := &Worker{
 		workerIndex: index,
@@ -125,5 +136,12 @@ func runWorker(index, r int, mapFunc, redFunc, partFunc plugin.Symbol) {
 		}
 		args.PrevTaskIndex = reply.TaskIndex
 		args.PrevTaskStage = reply.Stage
+		// If we want to crash the worker, crash after first task completed
+		// -------------------------------------
+		if shouldCrash {
+			log.Printf("Worker %v crashed", w.workerIndex)
+			return
+		}
+		// -------------------------------------
 	}
 }

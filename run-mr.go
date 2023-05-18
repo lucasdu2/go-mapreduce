@@ -2,6 +2,7 @@ package main
 
 import (
 	"flag"
+	"fmt"
 	"io"
 	"log"
 	"os"
@@ -65,7 +66,16 @@ func main() {
 	r := flag.Int("r", 8, "number of Reduce tasks to create")
 	cleanUpAfter := flag.Bool("clean", true,
 		"clean up intermediate files upon MapReduce completion")
+	crashCount := flag.Int("crash-count", 0, "number of workers to simulate "+
+		"crashes on, defaults to 0")
 	flag.Parse()
+
+	// Ensure that crashCount is less than numWorkers
+	if *crashCount >= *numWorkers {
+		fmt.Printf("Error: Number of workers to crash (%v) >= total number "+
+			"of workers (%v)\n", *crashCount, *numWorkers)
+		return
+	}
 
 	// Load application-specific functions at runtime
 	p, err := plugin.Open(*appFunctions)
@@ -126,7 +136,12 @@ func main() {
 		}()
 	}
 	// Run regular parallel MapReduce
-	mr.RunMapReduce(*m, *r, *numWorkers, mapFunc, redFunc, partitioner, killChan)
+	mr.RunMapReduce(
+		*m, *r, *numWorkers,
+		mapFunc, redFunc, partitioner,
+		*crashCount,
+		killChan,
+	)
 
 	// Move all outputs from workbench directory into outputs directory
 	err = os.Mkdir("outputs", 0755)
