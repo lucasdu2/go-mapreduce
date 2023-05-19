@@ -5,7 +5,6 @@ import (
 	"os"
 	"plugin"
 	"sort"
-	"strings"
 )
 
 func runMap(fname string, intermediateData map[string][]string,
@@ -33,18 +32,10 @@ func runReduce(intermediateData map[string][]string,
 
 	// Convert Reduce function from symbol
 	reducer := redFunc.(func(string, []string, *os.File) error)
-	err := os.Mkdir("outputs", 0755)
-	if err != nil {
-		if strings.Contains(err.Error(), "file exists") {
-			log.Println("Output directory \"outputs\" already exists from " +
-				"previous run, please remove and try again")
-			return nil
-		}
-		return err
-	}
-	outputName := "outputs/mr-out-0"
+	outputName := "mr-out-sequential"
 	// Create output file in append mode
-	fp, err := os.OpenFile(outputName, os.O_APPEND|os.O_WRONLY|os.O_CREATE, 0644)
+	fp, err := os.OpenFile(outputName, os.O_APPEND|os.O_WRONLY|os.O_CREATE,
+		0644)
 	if err != nil {
 		return err
 	}
@@ -52,7 +43,7 @@ func runReduce(intermediateData map[string][]string,
 	// Sort keys to ensure ordering guarantees (see 4.2 of reference paper)
 	sortedKeys := make([]string, len(intermediateData))
 	i := 0
-	for k, _ := range intermediateData {
+	for k := range intermediateData {
 		sortedKeys[i] = k
 		i++
 	}

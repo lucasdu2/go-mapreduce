@@ -60,7 +60,7 @@ func main() {
 		"plugin filename containing all application-specific functions: "+
 			"Map, Reduce, InputSplitter, Partitioner")
 	runSequential := flag.Bool("sequential", false,
-		"run MapReduce sequentially (use as correctness/performance baseline)")
+		"run MapReduce sequentially (use as correctness baseline)")
 	numWorkers := flag.Int("workers", 4, "number of workers to spawn")
 	m := flag.Int("m", 32, "number of Map tasks to create")
 	r := flag.Int("r", 8, "number of Reduce tasks to create")

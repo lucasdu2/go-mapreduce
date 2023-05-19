@@ -137,11 +137,9 @@ func runWorker(
 		args.PrevTaskIndex = reply.TaskIndex
 		args.PrevTaskStage = reply.Stage
 		// If we want to crash the worker, crash after first task completed
-		// -------------------------------------
 		if shouldCrash {
 			log.Printf("Worker %v crashed", w.workerIndex)
 			return
 		}
-		// -------------------------------------
 	}
 }
