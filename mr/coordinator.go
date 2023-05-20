@@ -114,13 +114,11 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	coordinator.m = m
 	coordinator.r = r
 	// Construct workers slice
-	workers := make([]workerInfo, numWorkers)
 	timeNow := time.Now()
 	for i := 0; i < numWorkers; i++ {
 		newWorker := workerInfo{timeNow, nil}
-		workers = append(workers, newWorker)
+		coordinator.workers = append(coordinator.workers, newWorker)
 	}
-	coordinator.workers = workers
 	// Construct taskCompletion map (initialize for Map stage)
 	taskCompletion := make(map[int]bool)
 	for i := 0; i < m; i++ {
@@ -342,34 +340,42 @@ func (c *Coordinator) WorkerHeartbeat(args *int, reply *bool) error {
 	// Update lastSeen field in workerInfo for worker sending heartbeat and
 	// send an acknowledgement back to worker
 	if args != nil {
-		c.workers[*args].lastSeen = time.Now()
+		t := time.Now()
+		c.workers[*args].lastSeen = t
+		log.Printf("Received hearbeat from Worker %v at %v", *args, t)
 		*reply = true
 	}
 	return nil
 }
 
 func (c *Coordinator) monitorWorkerHealth(workerIndex int) {
+	log.Printf("Started monitoring health of Worker %v", workerIndex)
 	// Continuously check if worker is still considered to be alive
 	for true {
 		// Sleep for 1 second between checks--workers should send a hearbeat
 		// every 100ms, so waiting for 1 second between checks should guarantee
 		// a change in lastSeen if worker is sending regular heartbeats
-		sleepInterval, err := time.ParseDuration("1s")
-		if err != nil {
-			log.Fatal(err)
-		}
+		sleepInterval := time.Second
 		time.Sleep(sleepInterval)
-
 		status := c.workers[workerIndex]
-		if !time.Now().After(status.lastSeen) {
+		log.Printf("Worker %v last seen: %v", workerIndex, status.lastSeen)
+		// Consider worker to be dead if current time is more than 1 second
+		// after the worker's last seen time
+		if time.Now().After(status.lastSeen.Add(time.Second)) {
+			log.Printf("Coordinator considers Worker %v dead", workerIndex)
 			// If worker considered dead, move current assigned task back into
 			// task queue if task is not already completed
 			c.taskCompLock.Lock()
 			defer c.taskCompLock.Unlock()
 
-			// If task is not already completed by another worker, requeue the task
-			if !c.taskCompletion[status.assignedTask.TaskIndex] {
-				c.taskAssigner.push(status.assignedTask)
+			// If task is not already completed by another worker, add the task
+			// back to task stack
+			crashedTask := status.assignedTask
+			if !c.taskCompletion[crashedTask.TaskIndex] {
+				c.taskAssigner.push(crashedTask)
+				log.Printf("Task %v from Stage %v re-added to task stack "+
+					"(previously assigned to Worker %v)", crashedTask.TaskIndex,
+					crashedTask.Stage, workerIndex)
 			}
 		}
 	}

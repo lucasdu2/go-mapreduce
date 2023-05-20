@@ -50,6 +50,8 @@ func RunMapReduce(
 
 	// Then start all Workers in goroutines
 	for i := 0; i < numWorkers; i++ {
+		// Start monitoring worker health
+		go c.monitorWorkerHealth(i)
 		// Crash the first n workers, where n=crashCount
 		if i < crashCount {
 			go runWorker(i, r, mapFunc, redFunc, partFunc, true)
@@ -58,10 +60,6 @@ func RunMapReduce(
 		}
 	}
 
-	// Start monitoring of Worker heartbeats in Coordinator
-	for i := 0; i < numWorkers; i++ {
-		go c.monitorWorkerHealth(i)
-	}
 	// Block on killChan
 	<-c.killChan
 	// Shutdown server gracefully when termination message is received on
@@ -90,19 +88,20 @@ func runWorker(
 		log.Fatal("dialing:", err)
 	}
 	// Run heartbeat in the background as a goroutine
+	// TODO: Try to pass a channel to this goroutine to indicate when it should
+	// simulate a crash, e.g. exit--simply exiting the runWorker function does
+	// *not* exit the goroutine, probably because it is actually owned by the
+	// RunMapReduce function above
 	go func() {
 		for true {
-			// Sleep 100ms between heartbeats
-			sleepInterval, err := time.ParseDuration("100ms")
-			if err != nil {
-				log.Fatal(err)
-			}
-			time.Sleep(sleepInterval)
 			var hbReply bool
 			err = client.Call("Coordinator.WorkerHeartbeat", &index, &hbReply)
 			if err != nil {
 				log.Panicf("Error sending heartbeat: %v\n", err)
 			}
+			// Sleep 100ms between heartbeats
+			sleepInterval := time.Millisecond * 100
+			time.Sleep(sleepInterval)
 		}
 	}()
 	// Set up request args and reply variables
