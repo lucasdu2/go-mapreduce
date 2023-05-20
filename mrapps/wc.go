@@ -98,21 +98,22 @@ func InputSplitter(filename string, m int) error {
 	words := strings.Fields(dataString)
 
 	// Split input file into M separate files
-	var start, index, totalWords int = 0, 0, len(words)
-	for start < totalWords {
+	var start, totalWords int = 0, len(words)
+	for index := 0; index < m; index++ {
 		end := start + totalWords/m
 		var split string
-		if end < totalWords {
-			split = strings.Join(words[start:end], " ")
-		} else {
+		if index == m-1 {
+			// If last index, collect until end of file
 			split = strings.Join(words[start:], " ")
+		} else {
+			// Else, collect next totalWords/m words
+			split = strings.Join(words[start:end], " ")
 		}
 		err := writeSplit(split, index)
 		if err != nil {
 			return err
 		}
 		start = end
-		index++
 	}
 	return nil
 }
