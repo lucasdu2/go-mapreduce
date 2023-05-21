@@ -187,6 +187,17 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 		log.Printf("Initial task assignment for Worker %v\n", args.WorkerIndex)
 		return
 	}
+	// Synchronize task completions: only allow one at a time. We could
+	// implement a finer grained locking scheme with one lock per task
+	// completion entry, but it's unclear if the benefit to performance is
+	// worth the added implementation effort (esp. since this project does not
+	// have any performance requirements).
+	// WHY: Multiple workers can concurrently report that they have completed
+	// the same task. We must avoid the situation where multiple workers see the
+	// task is not yet completed and enter the completion flow, since this would
+	// result in double counting of a task in the task counter.
+	c.taskCompLock.Lock()
+	defer c.taskCompLock.Unlock()
 
 	// If the completed task is for a previous stage, reject the completion
 	if args.PrevTaskStage != c.checkStage() {
@@ -197,18 +208,10 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	}
 	log.Printf("Worker %v has completed Task %v from Stage %v",
 		args.WorkerIndex, args.PrevTaskIndex, args.PrevTaskStage)
-
-	// NOTE: We need to acquire a lock when checking completion status in
-	// taskCompletion. Multiple workers can concurrently report that they have
-	// completed the same task, so there can be concurrent executions of
-	// handleTaskCompletion. We must avoid the situation where multiple workers
-	// see the task is not yet completed and enter the completion flow, since
-	// this would result in double counting of a task in the task counter.
-	c.taskCompLock.Lock()
-	defer c.taskCompLock.Unlock()
 	// If task is not already completed, run task completion flow
 	if !c.taskCompletion[args.PrevTaskIndex] {
-		log.Printf("Handling task completion")
+		log.Printf("Handling completion for Task %v from Stage %v",
+			args.PrevTaskIndex, args.PrevTaskStage)
 		if c.checkStage() == "map" {
 			c.addToIntermediateFiles(args.OutputFiles)
 		}
@@ -251,8 +254,11 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			// If stage is not over, but there are no outstanding tasks in the
 			// queue, we wait a random time before retrying
 			if err != nil {
+				log.Printf("No new task (Worker %v)", args.WorkerIndex)
 				waitDuration := time.Duration(rand.Intn(250) + 200)
 				time.Sleep(waitDuration * time.Millisecond)
+			} else {
+				break
 			}
 		}
 	}
@@ -372,11 +378,6 @@ func (c *Coordinator) monitorWorkerHealth(workerIndex int) {
 			log.Printf("Coordinator considers Worker %v dead", workerIndex)
 			// If worker considered dead, move current assigned task back into
 			// task queue if task is not already completed
-			// TODO: Somehow, some tasks are not getting re-added to the task
-			// stack, and the tasks that do get re-added are not actually
-			// getting re-assigned. Need to debug.
-			c.taskCompLock.Lock()
-			defer c.taskCompLock.Unlock()
 			crashedTask := status.assignedTask
 			c.taskAssigner.push(crashedTask)
 			log.Printf("Task %v from Stage %v re-added to task stack "+
