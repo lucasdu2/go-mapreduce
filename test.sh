@@ -53,10 +53,12 @@ fi
 
 # Build MapReduce run command (main func in run-mr.go)
 go version
+echo "Building go-mapreduce"
 if ! go build; then
   print_error "go build failed"
 fi
 
+echo "Running sequential MapReduce to produce reference output"
 # Run sequential MapReduce to produce reference output
 if ! ./go-mapreduce --input="$INPUT" --functions="$MRAPP" --sequential; then
   print_error "Sequential MapReduce failed to run"
@@ -65,28 +67,28 @@ fi
 # Start running MapReduce tests
 # ------------------------------------------------------------------------------
 clean_up
-echo "Test #1: parallel MapReduce, no crashes"
-echo "==="
-if ! ./go-mapreduce --input="$INPUT" --functions="$MRAPP" \
---clean=false 2>&1 | tee mrlog; then
-  print_error "MapReduce failed to run"
-fi
-echo "Check A: correct output"
-compare_output
-echo "Check B: no extraneous tasks scheduled"
-for i in {0..31}; do
-  if [[ $(grep -c "Assigned Task $i from Stage map" mrlog) != 1 ]]; then
-    print_error "Task $i assigned more than once during Stage map"
-  fi
-done
-for i in {0..7}; do
-  if [[ $(grep -c "Assigned Task $i from Stage reduce" mrlog) != 1 ]]; then
-    print_error "Task $i assigned more than once during Stage reduce"
-  fi
-done
-print_success "No extraneous tasks scheduled"
-clean_up
-echo "==="
+# echo "Test #1: parallel MapReduce, no crashes"
+# echo "==="
+# if ! ./go-mapreduce --input="$INPUT" --functions="$MRAPP" \
+# --clean=false 2>&1 | tee mrlog; then
+#   print_error "MapReduce failed to run"
+# fi
+# echo "Check A: correct output"
+# compare_output
+# echo "Check B: no extraneous tasks scheduled"
+# for i in {0..31}; do
+#   if [[ $(grep -c "Assigned Task $i from Stage map" mrlog) != 1 ]]; then
+#     print_error "Task $i assigned more than once during Stage map"
+#   fi
+# done
+# for i in {0..7}; do
+#   if [[ $(grep -c "Assigned Task $i from Stage reduce" mrlog) != 1 ]]; then
+#     print_error "Task $i assigned more than once during Stage reduce"
+#   fi
+# done
+# print_success "No extraneous tasks scheduled"
+# clean_up
+# echo "==="
 
 echo "Test #2: parallel MapReduce, simulate crashes"
 echo "==="

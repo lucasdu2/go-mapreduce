@@ -88,22 +88,25 @@ func runWorker(
 		log.Fatal("dialing:", err)
 	}
 	// Run heartbeat in the background as a goroutine
-	// TODO: Try to pass a channel to this goroutine to indicate when it should
-	// simulate a crash, e.g. exit--simply exiting the runWorker function does
-	// *not* exit the goroutine, probably because it is actually owned by the
-	// RunMapReduce function above
-	go func() {
+	crashChan := make(chan bool)
+	go func(c <-chan bool) {
 		for true {
-			var hbReply bool
-			err = client.Call("Coordinator.WorkerHeartbeat", &index, &hbReply)
-			if err != nil {
-				log.Panicf("Error sending heartbeat: %v\n", err)
+			select {
+			case <-c:
+				return
+			default:
+				var hbReply bool
+				err := client.Call("Coordinator.WorkerHeartbeat", &index,
+					&hbReply)
+				if err != nil {
+					log.Panicf("Error sending heartbeat: %v\n", err)
+				}
+				// Sleep 100ms between heartbeats
+				sleepInterval := time.Millisecond * 100
+				time.Sleep(sleepInterval)
 			}
-			// Sleep 100ms between heartbeats
-			sleepInterval := time.Millisecond * 100
-			time.Sleep(sleepInterval)
 		}
-	}()
+	}(crashChan)
 	// Set up request args and reply variables
 	args := &TaskRequest{
 		WorkerIndex: w.workerIndex,
@@ -138,6 +141,7 @@ func runWorker(
 		// If we want to crash the worker, crash after first task completed
 		if shouldCrash {
 			log.Printf("Worker %v crashed", w.workerIndex)
+			crashChan <- true
 			return
 		}
 	}

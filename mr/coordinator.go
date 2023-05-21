@@ -15,6 +15,7 @@ import (
 // workerInfo tracks the health of a worker and what task, if any, it is
 // currently expected to be working on
 type workerInfo struct {
+	up           bool
 	lastSeen     time.Time
 	assignedTask *TaskInfo
 }
@@ -116,7 +117,7 @@ func newCoordinator(m, r, numWorkers int, kc chan int) (*Coordinator, error) {
 	// Construct workers slice
 	timeNow := time.Now()
 	for i := 0; i < numWorkers; i++ {
-		newWorker := workerInfo{timeNow, nil}
+		newWorker := workerInfo{true, timeNow, nil}
 		coordinator.workers = append(coordinator.workers, newWorker)
 	}
 	// Construct taskCompletion map (initialize for Map stage)
@@ -201,7 +202,7 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 	// taskCompletion. Multiple workers can concurrently report that they have
 	// completed the same task, so there can be concurrent executions of
 	// handleTaskCompletion. We must avoid the situation where multiple workers
-	// see the task in not yet completed and enter the completion flow, since
+	// see the task is not yet completed and enter the completion flow, since
 	// this would result in double counting of a task in the task counter.
 	c.taskCompLock.Lock()
 	defer c.taskCompLock.Unlock()
@@ -214,7 +215,6 @@ func (c *Coordinator) handleTaskCompletion(args *TaskRequest) {
 		// Set task status to completed
 		c.taskCompletion[args.PrevTaskIndex] = true
 		// Increment completed tasks counter
-		log.Printf("Incrementing task counter")
 		c.countInc()
 	} else {
 		log.Printf("Task already completed")
@@ -228,12 +228,13 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 	// Assign new task to worker, if possible
 	var err error
 	nextTask, err := c.taskAssigner.pop()
-	log.Printf("Getting next task from task assignment queue")
+	log.Printf("Getting next task from task assignment stack")
 	// pop() will only return an non-nil error is there are no more tasks to
 	// assign. If this is the case, wait until all other tasks in stage are done
 	// before continuing.
 	if err != nil {
-		log.Print("No more tasks in task queue, waiting...")
+		log.Printf("No more tasks in task queue, will wait and periodically "+
+			"check for new tasks (Worker %v)...", args.WorkerIndex)
 		// Update worker in workers (workerInfo slice) with a "no task" indicator
 		c.workers[args.WorkerIndex].assignedTask = nil
 		// To synchronize stage completion while still allowing waiting threads
@@ -245,11 +246,12 @@ func (c *Coordinator) AssignTask(args *TaskRequest, reply *TaskInfo) error {
 			return nil
 		}
 		for currentStage == c.checkStage() {
+			log.Printf("Checking for new task (Worker %v)...", args.WorkerIndex)
 			nextTask, err = c.taskAssigner.pop()
 			// If stage is not over, but there are no outstanding tasks in the
-			// queue, we wait a random time and retry
+			// queue, we wait a random time before retrying
 			if err != nil {
-				waitDuration := time.Duration(rand.Intn(250))
+				waitDuration := time.Duration(rand.Intn(250) + 200)
 				time.Sleep(waitDuration * time.Millisecond)
 			}
 		}
@@ -289,6 +291,7 @@ func (c *Coordinator) countInc() {
 	c.stageLock.Lock()
 	defer c.stageLock.Unlock()
 	c.count++
+	log.Printf("Incremented task counter to %v", c.count)
 	// Handle logic when all tasks in stage are completed
 	if c.count == c.total {
 		log.Printf("Stage is over, reached expected number of tasks: %v", c.total)
@@ -362,21 +365,26 @@ func (c *Coordinator) monitorWorkerHealth(workerIndex int) {
 		// Consider worker to be dead if current time is more than 1 second
 		// after the worker's last seen time
 		if time.Now().After(status.lastSeen.Add(time.Second)) {
+			// If worker is already marked dead, do nothing else
+			if !status.up {
+				continue
+			}
 			log.Printf("Coordinator considers Worker %v dead", workerIndex)
 			// If worker considered dead, move current assigned task back into
 			// task queue if task is not already completed
+			// TODO: Somehow, some tasks are not getting re-added to the task
+			// stack, and the tasks that do get re-added are not actually
+			// getting re-assigned. Need to debug.
 			c.taskCompLock.Lock()
 			defer c.taskCompLock.Unlock()
-
-			// If task is not already completed by another worker, add the task
-			// back to task stack
 			crashedTask := status.assignedTask
-			if !c.taskCompletion[crashedTask.TaskIndex] {
-				c.taskAssigner.push(crashedTask)
-				log.Printf("Task %v from Stage %v re-added to task stack "+
-					"(previously assigned to Worker %v)", crashedTask.TaskIndex,
-					crashedTask.Stage, workerIndex)
-			}
+			c.taskAssigner.push(crashedTask)
+			log.Printf("Task %v from Stage %v re-added to task stack "+
+				"(previously assigned to Worker %v)", crashedTask.TaskIndex,
+				crashedTask.Stage, workerIndex)
+			c.workers[workerIndex].up = false
+		} else {
+			c.workers[workerIndex].up = true
 		}
 	}
 }
