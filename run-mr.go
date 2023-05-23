@@ -103,7 +103,12 @@ func main() {
 	// Handle sequential MapReduce
 	// ---------------------------
 	if *runSequential {
-		mr.SequentialRun(*inputFile, mapFunc, redFunc, killChan)
+		mr.SequentialRun(
+			*inputFile,
+			mapFunc, redFunc, partitioner,
+			*r,
+			killChan,
+		)
 		return
 	}
 
