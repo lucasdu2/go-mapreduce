@@ -26,7 +26,7 @@ notes in  `design-doc`, and the code itself are clear enough as they are
   - Many of the design decisions made here are (probably) not optimal, so please
 do not use as a reference of any kind--ultimately, this is just a toy project 
 for my own enjoyment/benefit
-- Some final notes:
+- Some general notes to self:
   - Be very careful about how and where you use locks in a distributed system,
 they have the potential to cause very weird bugs and bad performance problems
 if used irresponsibly
